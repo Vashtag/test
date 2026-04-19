@@ -923,14 +923,37 @@ function slug(s) {
     .replace(/^-|-$/g, '') || 'media';
 }
 
+/* preview.redd.it URLs are CORS-blocked by fetch() but the same
+   file exists on i.redd.it without any auth token. */
+function toDirectUrl(url) {
+  if (!url) return null;
+  if (/^https?:\/\/i\.redd\.it\//i.test(url))    return url;
+  if (/^https?:\/\/i\.imgur\.com\//i.test(url))  return url;
+  const m = url.match(/\/([a-zA-Z0-9]+\.(?:jpe?g|png|gif|webp))(?:\?|$)/i);
+  return m ? `https://i.redd.it/${m[1]}` : null;
+}
+
 async function fetchBlob(url) {
-  try {
-    const r = await fetch(url, { credentials: 'omit' });
-    if (r.ok) return r.blob();
-  } catch { /* fall through */ }
-  const r = await fetch(PROXY(url), { credentials: 'omit' });
-  if (r.ok) return r.blob();
-  throw new Error('fetch failed: ' + url);
+  const direct     = toDirectUrl(url);
+  const candidates = [...new Set([direct, url].filter(Boolean))];
+
+  /* 1 — try direct (i.redd.it has ACAO:* so this usually works) */
+  for (const u of candidates) {
+    try {
+      const r = await fetch(u, { credentials: 'omit' });
+      if (r.ok) return r.blob();
+    } catch { /* try next */ }
+  }
+
+  /* 2 — CORS proxy fallback */
+  for (const u of candidates) {
+    try {
+      const r = await fetch(PROXY(u), { credentials: 'omit' });
+      if (r.ok) return r.blob();
+    } catch { /* try next */ }
+  }
+
+  throw new Error('all attempts failed: ' + url);
 }
 
 /* ── Download selected ───────────────────────────── */
