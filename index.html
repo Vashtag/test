@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Reddit Media Scraper</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     [hidden] { display: none !important; }
@@ -230,6 +231,59 @@
       pointer-events: none;
     }
 
+    /* ── Select mode ────────────────────────────────*/
+    .card .chk {
+      position: absolute;
+      top: 6px; left: 6px;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,.55);
+      background: rgba(0,0,0,.5);
+      z-index: 3;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity .15s, background .12s, border-color .12s;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .select-mode .card .chk        { opacity: 1; }
+    .card.selected                  { border-color: var(--accent) !important; box-shadow: 0 0 0 2px var(--accent) !important; }
+    .card.selected .chk             { background: var(--accent); border-color: var(--accent); }
+    .card.selected .chk::after      { content: '✓'; color: #fff; font-size: 13px; font-weight: 800; }
+
+    /* ── Download bar ────────────────────────────── */
+    #dl-bar {
+      position: sticky;
+      bottom: 0;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 11px 24px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      z-index: 15;
+    }
+    #dl-count-text { flex: 1; font-size: 0.85rem; color: var(--muted); }
+    #dl-bar .ghost {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 0.82rem;
+      padding: 6px 14px;
+    }
+    #dl-bar .ghost:hover:not(:disabled) { background: var(--bg); border-color: var(--accent); color: var(--accent); }
+    #dl-btn { background: var(--blue); }
+    #dl-btn:hover:not(:disabled) { background: #3a86d4; }
+
+    /* ── Select button in header ─────────────────── */
+    #select-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 0.88rem;
+    }
+    #select-btn:hover:not(:disabled) { background: var(--bg); border-color: var(--muted); }
+    #select-btn.active { border-color: var(--accent); color: var(--accent); }
+
     /* ── Empty state ─────────────────────────────── */
     #empty-notice {
       text-align: center;
@@ -366,6 +420,7 @@
     <div class="search-row">
       <input type="text" id="username" placeholder="Reddit username (e.g. spez)" autocomplete="off" spellcheck="false" />
       <button id="scrape-btn">Scrape</button>
+      <button id="select-btn" hidden>Select</button>
     </div>
   </div>
 </header>
@@ -399,6 +454,14 @@
   <div id="grid-gifs"   class="grid tab-pane" hidden></div>
   <div id="grid-videos" class="grid tab-pane" hidden></div>
   <div id="empty-notice" hidden>No images, GIFs, or videos found for this user.</div>
+</div>
+
+<!-- ── Download bar (sticky footer) ──────────────── -->
+<div id="dl-bar" hidden>
+  <span id="dl-count-text">0 selected</span>
+  <button class="ghost" id="sel-all-btn">Select all</button>
+  <button class="ghost" id="desel-btn">Deselect all</button>
+  <button id="dl-btn">&#8659; Download selected</button>
 </div>
 
 <!-- ── Lightbox ───────────────────────────────────── -->
@@ -438,11 +501,13 @@ const CFG = {
 /* ── State ───────────────────────────────────────── */
 function mkState() {
   return {
-    user    : '',
-    loading : false,
-    items   : { images: [], gifs: [], videos: [] },
-    rgQueue : [],
-    lb      : null,   // { list, idx }
+    user      : '',
+    loading   : false,
+    items     : { images: [], gifs: [], videos: [] },
+    rgQueue   : [],
+    lb        : null,
+    selecting : false,
+    selected  : new Set(),
   };
 }
 let S = mkState();
@@ -657,9 +722,14 @@ function buildCard(item) {
   const card = document.createElement('div');
   card.className = 'card';
   card.addEventListener('click', () => {
+    if (S.selecting) { toggleCard(item); return; }
     const list = S.items[item.cat];
     openLb(list, list.indexOf(item));
   });
+
+  const chk = document.createElement('div');
+  chk.className = 'chk';
+  card.appendChild(chk);
 
   if (item.cat !== 'images') {
     const badge = document.createElement('span');
@@ -778,6 +848,152 @@ document.querySelectorAll('.tab').forEach(btn => {
   });
 });
 
+/* ── Selection ───────────────────────────────────── */
+
+function toggleSelectMode() {
+  S.selecting = !S.selecting;
+  const btn = $('select-btn');
+  if (S.selecting) {
+    btn.textContent = 'Cancel';
+    btn.classList.add('active');
+    document.getElementById('main').classList.add('select-mode');
+    $('dl-bar').removeAttribute('hidden');
+  } else {
+    btn.textContent = 'Select';
+    btn.classList.remove('active');
+    document.getElementById('main').classList.remove('select-mode');
+    $('dl-bar').setAttribute('hidden', '');
+    clearSelection();
+  }
+}
+
+function toggleCard(item) {
+  const card = item._el;
+  if (S.selected.has(item)) {
+    S.selected.delete(item);
+    card.classList.remove('selected');
+  } else {
+    S.selected.add(item);
+    card.classList.add('selected');
+  }
+  updateSelectionUI();
+}
+
+function clearSelection() {
+  S.selected.forEach(item => item._el?.classList.remove('selected'));
+  S.selected.clear();
+  updateSelectionUI();
+}
+
+function selectAll() {
+  /* Select all items across all categories */
+  ['images','gifs','videos'].forEach(cat => {
+    S.items[cat].forEach(item => {
+      S.selected.add(item);
+      item._el?.classList.add('selected');
+    });
+  });
+  updateSelectionUI();
+}
+
+function updateSelectionUI() {
+  const n = S.selected.size;
+  $('dl-count-text').textContent = n === 1 ? '1 item selected' : `${n} items selected`;
+  $('dl-btn').disabled = n === 0;
+}
+
+$('select-btn').addEventListener('click', toggleSelectMode);
+$('sel-all-btn').addEventListener('click', selectAll);
+$('desel-btn').addEventListener('click', clearSelection);
+$('dl-btn').addEventListener('click', downloadSelected);
+
+/* ── Download helpers ────────────────────────────── */
+
+function blobExt(blob, url) {
+  const map = { 'image/jpeg':'jpg','image/jpg':'jpg','image/png':'png',
+                'image/gif':'gif','image/webp':'webp',
+                'video/mp4':'mp4','video/webm':'webm' };
+  if (map[blob?.type]) return map[blob.type];
+  const m = (url || '').match(/\.(jpe?g|png|gif|webp|mp4|webm)(\?|$)/i);
+  return m ? m[1].replace('jpeg','jpg') : 'jpg';
+}
+
+function slug(s) {
+  return (s || 'media').replace(/[^a-z0-9]+/gi, '-').slice(0, 50)
+    .replace(/^-|-$/g, '') || 'media';
+}
+
+async function fetchBlob(url) {
+  try {
+    const r = await fetch(url, { credentials: 'omit' });
+    if (r.ok) return r.blob();
+  } catch { /* fall through */ }
+  const r = await fetch(PROXY(url), { credentials: 'omit' });
+  if (r.ok) return r.blob();
+  throw new Error('fetch failed: ' + url);
+}
+
+/* ── Download selected ───────────────────────────── */
+
+async function downloadSelected() {
+  const items = [...S.selected];
+  if (!items.length) return;
+
+  $('dl-btn').disabled = true;
+  const n = items.length;
+
+  if ('showDirectoryPicker' in window) {
+    /* ── Folder picker (Chrome / Edge) ── */
+    let dir;
+    try { dir = await window.showDirectoryPicker({ mode: 'readwrite' }); }
+    catch { $('dl-btn').disabled = false; return; } /* user cancelled */
+
+    let done = 0, failed = 0;
+    for (const item of items) {
+      setProgress(`Saving ${done + 1} / ${n}…`, '', done / n);
+      try {
+        const url  = item.src || item.preview;
+        const blob = await fetchBlob(url);
+        const ext  = blobExt(blob, url);
+        const name = `${String(done + 1).padStart(4, '0')}_${slug(item.title)}.${ext}`;
+        const fh   = await dir.getFileHandle(name, { create: true });
+        const wr   = await fh.createWritable();
+        await wr.write(blob);
+        await wr.close();
+      } catch { failed++; }
+      done++;
+    }
+    setProgress(`Saved ${done - failed} / ${n} files`, '', 1);
+
+  } else {
+    /* ── ZIP fallback (Firefox / Safari) ── */
+    const zip = new JSZip();
+    let done = 0, failed = 0;
+    for (const item of items) {
+      setProgress(`Packing ${done + 1} / ${n}…`, '', done / n);
+      try {
+        const url  = item.src || item.preview;
+        const blob = await fetchBlob(url);
+        const ext  = blobExt(blob, url);
+        const name = `${String(done + 1).padStart(4, '0')}_${slug(item.title)}.${ext}`;
+        zip.file(name, await blob.arrayBuffer());
+      } catch { failed++; }
+      done++;
+    }
+    setProgress('Building ZIP…', '', 0.99);
+    const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+    const a = Object.assign(document.createElement('a'), {
+      href     : URL.createObjectURL(zipBlob),
+      download : `reddit-${S.user}-${Date.now()}.zip`,
+    });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+    setProgress(`Done — ${done - failed} files in ZIP`, '', 1);
+  }
+
+  $('dl-btn').disabled = S.selected.size === 0;
+}
+
 /* ── UI helpers ──────────────────────────────────── */
 function updateCounts() {
   ['images', 'gifs', 'videos'].forEach(c => {
@@ -814,6 +1030,11 @@ async function startScrape() {
   S.loading = true;
   _useProxy = false;
 
+  /* Reset select state from previous scrape */
+  if (S.selecting) toggleSelectMode();
+  S.selected.clear();
+  $('select-btn').setAttribute('hidden', '');
+
   scrapeBtn.disabled = true;
   $('error-area').setAttribute('hidden', '');
   $('empty-notice').setAttribute('hidden', '');
@@ -839,6 +1060,7 @@ async function startScrape() {
 
     if (S.rgQueue.length) await resolveRedgifs();
     setProgress(`Done — ${total()} items found`, '', 1);
+    $('select-btn').removeAttribute('hidden');
 
   } catch (err) {
     showError(err.message);
