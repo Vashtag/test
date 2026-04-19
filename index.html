@@ -1013,6 +1013,16 @@ async function downloadSelected() {
   $('dl-btn').disabled = true;
   const n = items.length;
 
+  /* For videos always use item.src (the actual MP4). Never fall back to the
+     poster/preview image — that would silently download a JPEG instead of a video. */
+  function srcFor(item) {
+    if (item.cat === 'videos') {
+      if (!item.src) throw new Error('video URL not resolved — skipping');
+      return item.src;
+    }
+    return item.src || item.preview;
+  }
+
   /* Re-resolve any Redgifs that have no src yet (e.g. API failed on first pass) */
   const needSrc = items.filter(i => i.rgid && !i.src);
   if (needSrc.length) {
@@ -1048,7 +1058,7 @@ async function downloadSelected() {
     for (const item of items) {
       setProgress(`Saving ${done + 1} / ${n}…`, '', done / n);
       try {
-        const url  = item.src || item.preview;
+        const url  = srcFor(item);
         const blob = await fetchBlob(url);
         const ext  = blobExt(blob, url);
         const name = `${String(done + 1).padStart(4, '0')}_${slug(item.title)}.${ext}`;
@@ -1068,7 +1078,7 @@ async function downloadSelected() {
     for (const item of items) {
       setProgress(`Packing ${done + 1} / ${n}…`, '', done / n);
       try {
-        const url  = item.src || item.preview;
+        const url  = srcFor(item);
         const blob = await fetchBlob(url);
         const ext  = blobExt(blob, url);
         const name = `${String(done + 1).padStart(4, '0')}_${slug(item.title)}.${ext}`;
