@@ -923,20 +923,21 @@ function slug(s) {
     .replace(/^-|-$/g, '') || 'media';
 }
 
-/* preview.redd.it URLs are CORS-blocked by fetch(). The same file
-   lives on i.redd.it without auth tokens. */
+/* preview.redd.it → i.redd.it (same file, no auth token needed).
+   external-preview.redd.it hosts third-party images — no i.redd.it equivalent, return null. */
 function toDirectUrl(url) {
   if (!url) return null;
-  if (/^https?:\/\/i\.redd\.it\//i.test(url))   return url;
-  if (/^https?:\/\/i\.imgur\.com\//i.test(url)) return url;
+  if (/^https?:\/\/i\.redd\.it\//i.test(url))              return url;
+  if (/^https?:\/\/i\.imgur\.com\//i.test(url))            return url;
+  if (/^https?:\/\/external-preview\.redd\.it\//i.test(url)) return null;
   const m = url.match(/\/([a-zA-Z0-9]+\.(?:jpe?g|png|gif|webp))(?:\?|$)/i);
   return m ? `https://i.redd.it/${m[1]}` : null;
 }
 
 /* wsrv.nl fetches images server-side and adds CORS headers.
-   Strip query params so they don't conflict with wsrv's own params. */
+   Encode ? and & so the original auth token is preserved as part of the url= value. */
 const DL_PROXIES = [
-  u => `https://wsrv.nl/?url=${u.replace(/^https?:\/\//i, '').split('?')[0]}`,
+  u => `https://wsrv.nl/?url=${u.replace(/^https?:\/\//i, '').replace('?', '%3F').replace(/&/g, '%26')}`,
   u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
   u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
 ];
