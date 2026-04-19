@@ -933,7 +933,10 @@ function toDirectUrl(url) {
   return m ? `https://i.redd.it/${m[1]}` : null;
 }
 
+/* wsrv.nl fetches images server-side and adds CORS headers.
+   Strip query params so they don't conflict with wsrv's own params. */
 const DL_PROXIES = [
+  u => `https://wsrv.nl/?url=${u.replace(/^https?:\/\//i, '').split('?')[0]}`,
   u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
   u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
 ];
