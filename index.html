@@ -691,7 +691,7 @@ async function resolveRedgifs() {
           });
           if (!r.ok) return;
           const { gif } = await r.json();
-          item.src     = gif.urls.hd || gif.urls.sd || item.src;
+          item.src     = `https://media.redgifs.com/${gif.id}.mp4`;
           item.poster  = gif.poster  || gif.thumbnail || item.poster;
           item.preview = gif.poster  || gif.thumbnail || item.preview;
           if (item._thumb) item._thumb.src = item.preview || '';
@@ -927,8 +927,9 @@ function slug(s) {
    external-preview.redd.it hosts third-party images — no i.redd.it equivalent, return null. */
 function toDirectUrl(url) {
   if (!url) return null;
-  if (/^https?:\/\/i\.redd\.it\//i.test(url))              return url;
-  if (/^https?:\/\/i\.imgur\.com\//i.test(url))            return url;
+  if (/^https?:\/\/i\.redd\.it\//i.test(url))                return url;
+  if (/^https?:\/\/i\.imgur\.com\//i.test(url))              return url;
+  if (/^https?:\/\/media\.redgifs\.com\//i.test(url))        return url;
   if (/^https?:\/\/external-preview\.redd\.it\//i.test(url)) return null;
   const m = url.match(/\/([a-zA-Z0-9]+\.(?:jpe?g|png|gif|webp))(?:\?|$)/i);
   return m ? `https://i.redd.it/${m[1]}` : null;
@@ -1037,7 +1038,7 @@ async function downloadSelected() {
           });
           if (!r.ok) return;
           const { gif } = await r.json();
-          item.src     = gif.urls.hd || gif.urls.sd || item.src;
+          item.src     = `https://media.redgifs.com/${gif.id}.mp4`;
           item.poster  = gif.poster  || gif.thumbnail || item.poster;
           item.preview = gif.poster  || gif.thumbnail || item.preview;
           if (item._thumb) item._thumb.src = item.preview || '';
