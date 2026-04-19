@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reddit Media Scraper</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0d1117;
+      --surface:  #161b22;
+      --border:   #30363d;
+      --text:     #e6edf3;
+      --muted:    #8b949e;
+      --accent:   #ff4500;
+      --accentH:  #e03d00;
+      --blue:     #58a6ff;
+      --green:    #3fb950;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ── Header ─────────────────────────────────── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+
+    .hdr {
+      max-width: 1400px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    h1 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--accent);
+      white-space: nowrap;
+    }
+
+    .search-row {
+      display: flex;
+      gap: 8px;
+      flex: 1;
+      min-width: 240px;
+    }
+
+    input[type="text"] {
+      flex: 1;
+      padding: 9px 14px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input[type="text"]:focus        { border-color: var(--accent); }
+    input[type="text"]::placeholder { color: var(--muted); }
+
+    button {
+      padding: 9px 20px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s, opacity 0.15s;
+    }
+    button:hover:not(:disabled)  { background: var(--accentH); }
+    button:disabled               { opacity: .45; cursor: not-allowed; }
+
+    /* ── Progress ────────────────────────────────── */
+    #progress-area {
+      max-width: 1400px;
+      margin: 14px auto 0;
+      padding: 0 24px;
+    }
+
+    .prog-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.82rem;
+      color: var(--muted);
+      margin-bottom: 5px;
+    }
+
+    .prog-track {
+      height: 4px;
+      background: #21262d;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    #prog-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 4px;
+      width: 0%;
+      transition: width 0.25s, background 0.3s;
+    }
+    #prog-fill.done { background: var(--green); }
+    #prog-fill.blue { background: var(--blue);  }
+
+    /* ── Error ───────────────────────────────────── */
+    #error-area {
+      max-width: 1400px;
+      margin: 14px auto 0;
+      padding: 0 24px;
+    }
+
+    .err-box {
+      background: #1a0a0a;
+      border: 1px solid #f8514940;
+      border-radius: 6px;
+      padding: 10px 16px;
+      color: #f85149;
+      font-size: 0.9rem;
+    }
+
+    /* ── Main ────────────────────────────────────── */
+    #main {
+      max-width: 1400px;
+      margin: 20px auto 60px;
+      padding: 0 24px;
+    }
+
+    /* ── Tabs ────────────────────────────────────── */
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 18px;
+    }
+
+    .tab {
+      background: none;
+      border: none;
+      border-bottom: 3px solid transparent;
+      border-radius: 0;
+      color: var(--muted);
+      font-size: 0.88rem;
+      font-weight: 600;
+      padding: 10px 20px;
+      cursor: pointer;
+      margin-bottom: -1px;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .tab:hover:not(:disabled)  { background: none; color: var(--text); }
+    .tab.active                { color: var(--text); border-bottom-color: var(--accent); }
+
+    .tab .cnt {
+      background: var(--border);
+      border-radius: 10px;
+      font-size: 0.75rem;
+      padding: 1px 7px;
+      margin-left: 6px;
+      color: var(--muted);
+    }
+    .tab.active .cnt { background: #ff450025; color: var(--accent); }
+
+    /* ── Grid ────────────────────────────────────── */
+    .grid {
+      columns: 6 150px;
+      column-gap: 8px;
+    }
+
+    .card {
+      break-inside: avoid;
+      margin-bottom: 8px;
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      position: relative;
+      transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+    }
+    .card:hover {
+      transform: translateY(-2px);
+      border-color: var(--accent);
+      box-shadow: 0 4px 20px rgba(255,69,0,.15);
+    }
+
+    .card img {
+      display: block;
+      width: 100%;
+      height: auto;
+      pointer-events: none;
+    }
+
+    .card .cap {
+      padding: 5px 8px;
+      font-size: 0.7rem;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .badge {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      background: rgba(0,0,0,.78);
+      color: #fff;
+      font-size: 0.58rem;
+      font-weight: 700;
+      letter-spacing: .5px;
+      padding: 2px 5px;
+      border-radius: 4px;
+      pointer-events: none;
+    }
+
+    /* ── Empty state ─────────────────────────────── */
+    #empty-notice {
+      text-align: center;
+      padding: 80px 0;
+      color: var(--muted);
+    }
+
+    /* ── Lightbox ────────────────────────────────── */
+    #lightbox {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: rgba(0,0,0,.94);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #lb-close {
+      position: absolute;
+      top: 14px;
+      right: 18px;
+      background: rgba(255,255,255,.08);
+      border: none;
+      color: var(--muted);
+      font-size: 1.4rem;
+      padding: 4px 11px;
+      border-radius: 5px;
+      line-height: 1.5;
+      cursor: pointer;
+    }
+    #lb-close:hover { background: rgba(255,255,255,.16); color: var(--text); }
+
+    .lb-nav {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.1);
+      color: var(--text);
+      font-size: 2rem;
+      line-height: 1;
+      padding: 18px 13px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    .lb-nav:hover  { background: rgba(255,255,255,.14); }
+    #lb-prev       { left: 12px; }
+    #lb-next       { right: 12px; }
+
+    #lb-media {
+      max-width:  calc(100vw - 130px);
+      max-height: calc(100vh - 110px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #lb-img, #lb-vid {
+      max-width: 100%;
+      max-height: calc(100vh - 110px);
+      border-radius: 4px;
+      object-fit: contain;
+      display: block;
+    }
+
+    #lb-bar {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: linear-gradient(transparent, rgba(0,0,0,.82));
+      padding: 28px 20px 14px;
+      display: flex;
+      align-items: flex-end;
+      gap: 14px;
+    }
+
+    #lb-info { flex: 1; min-width: 0; }
+
+    #lb-title {
+      display: block;
+      font-size: 0.85rem;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 6px;
+    }
+
+    .lb-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .lb-link {
+      font-size: 0.78rem;
+      color: var(--blue);
+      text-decoration: none;
+      border: 1px solid var(--border);
+      padding: 4px 10px;
+      border-radius: 4px;
+      background: rgba(0,0,0,.4);
+      white-space: nowrap;
+      transition: border-color .15s;
+    }
+    .lb-link:hover { border-color: var(--blue); }
+
+    #lb-hint {
+      font-size: 0.72rem;
+      color: #6e7681;
+      margin-top: 5px;
+    }
+
+    #lb-count {
+      font-size: 0.82rem;
+      color: var(--muted);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    /* ── Responsive ──────────────────────────────── */
+    @media (max-width: 600px) {
+      .grid { columns: 2 120px; }
+      #lb-media { max-width: 100vw; }
+      .lb-nav { padding: 12px 9px; font-size: 1.5rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────── -->
+<header>
+  <div class="hdr">
+    <h1>Reddit Media Scraper</h1>
+    <div class="search-row">
+      <input type="text" id="username" placeholder="Reddit username (e.g. spez)" autocomplete="off" spellcheck="false" />
+      <button id="scrape-btn">Scrape</button>
+    </div>
+  </div>
+</header>
+
+<!-- ── Progress ───────────────────────────────────── -->
+<div id="progress-area" hidden>
+  <div class="prog-row">
+    <span id="prog-label"></span>
+    <span id="prog-detail"></span>
+  </div>
+  <div class="prog-track"><div id="prog-fill"></div></div>
+</div>
+
+<!-- ── Error ──────────────────────────────────────── -->
+<div id="error-area" hidden></div>
+
+<!-- ── Main / Tabs / Grids ────────────────────────── -->
+<div id="main" hidden>
+  <div class="tabs">
+    <button class="tab active" data-tab="images">
+      Images <span class="cnt" id="cnt-images">0</span>
+    </button>
+    <button class="tab" data-tab="gifs">
+      GIFs <span class="cnt" id="cnt-gifs">0</span>
+    </button>
+    <button class="tab" data-tab="videos">
+      Videos <span class="cnt" id="cnt-videos">0</span>
+    </button>
+  </div>
+  <div id="grid-images" class="grid tab-pane"></div>
+  <div id="grid-gifs"   class="grid tab-pane" hidden></div>
+  <div id="grid-videos" class="grid tab-pane" hidden></div>
+  <div id="empty-notice" hidden>No images, GIFs, or videos found for this user.</div>
+</div>
+
+<!-- ── Lightbox ───────────────────────────────────── -->
+<div id="lightbox" hidden>
+  <button id="lb-close" title="Close (Esc)">✕</button>
+  <button id="lb-prev" class="lb-nav" title="Previous (←)">‹</button>
+  <div id="lb-media">
+    <img id="lb-img" alt="" referrerpolicy="no-referrer" hidden />
+    <video id="lb-vid" controls loop playsinline hidden></video>
+  </div>
+  <button id="lb-next" class="lb-nav" title="Next (→)">›</button>
+  <div id="lb-bar">
+    <div id="lb-info">
+      <span id="lb-title"></span>
+      <div class="lb-actions">
+        <a id="lb-open" class="lb-link" href="#" target="_blank" rel="noopener">Open full size ↗</a>
+        <a id="lb-post" class="lb-link" href="#" target="_blank" rel="noopener">Reddit post ↗</a>
+      </div>
+      <div id="lb-hint">Right-click image → Save image as</div>
+    </div>
+    <span id="lb-count"></span>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+/* ── Config ──────────────────────────────────────── */
+const CFG = {
+  pageLimit : 100,
+  maxPages  : 50,
+  apiDelay  : 350,
+  rgBatch   : 4,
+  rgTtl     : 5 * 60 * 1000,
+};
+
+/* ── State ───────────────────────────────────────── */
+function mkState() {
+  return {
+    user    : '',
+    loading : false,
+    items   : { images: [], gifs: [], videos: [] },
+    rgQueue : [],
+    lb      : null,   // { list, idx }
+  };
+}
+let S = mkState();
+
+let _rgToken = null, _rgTokenTs = 0;
+
+/* ── DOM helpers ─────────────────────────────────── */
+const $   = id => document.getElementById(id);
+const el  = $;
+const usernameEl = $('username');
+const scrapeBtn  = $('scrape-btn');
+
+/* ── Utils ───────────────────────────────────────── */
+const sleep   = ms => new Promise(r => setTimeout(r, ms));
+const dec     = u  => (u || '').replace(/&amp;/g, '&');
+const isImg   = u  => /\.(jpe?g|png|webp|bmp)(\?|$)/i.test(u || '');
+const isGif   = u  => /\.gif(\?|$)/i.test(u || '');
+
+function pickRes(arr, targetW = 320) {
+  if (!arr?.length) return null;
+  const norm = arr
+    .map(r => ({ url: dec(r.url || r.u || ''), w: +(r.width || r.x || 0) }))
+    .filter(r => r.url);
+  if (!norm.length) return null;
+  const fit = norm.filter(r => r.w >= targetW);
+  return (fit.length ? fit[0] : norm[norm.length - 1]).url;
+}
+
+function rgIdOf(url) {
+  const m = (url || '').match(/redgifs\.com\/(?:watch|ifr)\/([a-zA-Z0-9]+)/i);
+  return m ? m[1].toLowerCase() : null;
+}
+
+function total() {
+  return S.items.images.length + S.items.gifs.length + S.items.videos.length;
+}
+
+/* ── Extraction ──────────────────────────────────── */
+
+function extractPost(d) {
+  if (d.is_self) return [];
+  const postUrl = 'https://reddit.com' + d.permalink;
+  const title   = d.title || '';
+  const out     = [];
+
+  /* Gallery */
+  if (d.is_gallery && d.media_metadata) {
+    for (const gi of (d.gallery_data?.items || [])) {
+      const meta = d.media_metadata[gi.media_id];
+      if (!meta || meta.status !== 'valid' || !meta.s) continue;
+
+      if (meta.e === 'AnimatedImage') {
+        const gifSrc = dec(meta.s.gif || '');
+        const mp4Src = dec(meta.s.mp4 || '');
+        const still  = dec(meta.s.u   || '');
+        const prev   = pickRes(meta.p) || still;
+        if (gifSrc)
+          out.push({ cat:'gifs',   src:gifSrc, preview:prev||gifSrc, poster:null, postUrl, title });
+        else if (mp4Src)
+          out.push({ cat:'videos', src:mp4Src, preview:prev||still,  poster:still, postUrl, title });
+        continue;
+      }
+
+      const src  = dec(meta.s.u || meta.s.url || '');
+      const prev = pickRes(meta.p) || src;
+      if (src) out.push({ cat:'images', src, preview:prev, poster:null, postUrl, title });
+    }
+    return out;
+  }
+
+  /* Redgifs */
+  const rgid = rgIdOf(d.url);
+  if (rgid) {
+    const poster = dec(d.preview?.images?.[0]?.source?.url || '');
+    const prev   = pickRes(d.preview?.images?.[0]?.resolutions) || poster;
+    out.push({ cat:'videos', src:null, preview:prev, poster, rgid, postUrl, title });
+    return out;
+  }
+
+  /* Native Reddit video (v.redd.it) */
+  if (d.is_video && d.media?.reddit_video) {
+    const rv     = d.media.reddit_video;
+    const poster = dec(d.preview?.images?.[0]?.source?.url || '');
+    const prev   = pickRes(d.preview?.images?.[0]?.resolutions) || poster;
+    out.push({ cat:'videos', src:dec(rv.fallback_url||''), preview:prev, poster, postUrl, title });
+    return out;
+  }
+
+  /* Direct GIF link */
+  if (isGif(d.url)) {
+    const src  = dec(d.url);
+    const prev = pickRes(d.preview?.images?.[0]?.resolutions) || src;
+    out.push({ cat:'gifs', src, preview:prev, poster:null, postUrl, title });
+    return out;
+  }
+
+  /* Static image */
+  if (d.post_hint === 'image' || isImg(d.url)) {
+    const src  = dec(d.preview?.images?.[0]?.source?.url || '') || dec(d.url);
+    const prev = pickRes(d.preview?.images?.[0]?.resolutions) || src;
+    if (src) out.push({ cat:'images', src, preview:prev, poster:null, postUrl, title });
+    return out;
+  }
+
+  return out;
+}
+
+/* ── Reddit API ──────────────────────────────────── */
+
+async function fetchAllPosts() {
+  let after = '', page = 0;
+
+  while (page < CFG.maxPages) {
+    page++;
+    setProgress('Collecting posts…', `Page ${page} · ${total()} items`, null);
+
+    const qs  = `limit=${CFG.pageLimit}&raw_json=1${after ? '&after=' + after : ''}`;
+    const url = `https://www.reddit.com/user/${encodeURIComponent(S.user)}/submitted.json?${qs}`;
+    const res = await fetch(url, { credentials: 'omit' });
+
+    if (res.status === 404) throw new Error(`User u/${S.user} not found.`);
+    if (res.status === 403) throw new Error(`u/${S.user}'s profile is private.`);
+    if (!res.ok)            throw new Error(`Reddit API error (HTTP ${res.status}).`);
+
+    const json  = await res.json();
+    const posts = json.data.children;
+    after       = json.data.after || '';
+
+    const batch = { images:[], gifs:[], videos:[] };
+    for (const p of posts) {
+      for (const item of extractPost(p.data)) {
+        S.items[item.cat].push(item);
+        batch[item.cat].push(item);
+        if (item.rgid) S.rgQueue.push(item);
+      }
+    }
+    appendToGrids(batch);
+    updateCounts();
+
+    if (!after) break;
+    await sleep(CFG.apiDelay);
+  }
+}
+
+/* ── Redgifs resolution ──────────────────────────── */
+
+async function fetchRgToken() {
+  if (_rgToken && Date.now() - _rgTokenTs < CFG.rgTtl) return _rgToken;
+  const r  = await fetch('https://api.redgifs.com/v2/auth/temporary', { credentials:'omit' });
+  const d  = await r.json();
+  _rgToken   = d.token;
+  _rgTokenTs = Date.now();
+  return _rgToken;
+}
+
+async function resolveRedgifs() {
+  if (!S.rgQueue.length) return;
+  let done = 0;
+  setProgress('Resolving Redgifs…', `0 / ${S.rgQueue.length}`, 0);
+
+  for (let i = 0; i < S.rgQueue.length; i += CFG.rgBatch) {
+    await Promise.allSettled(
+      S.rgQueue.slice(i, i + CFG.rgBatch).map(async item => {
+        try {
+          const tok = await fetchRgToken();
+          const r   = await fetch(`https://api.redgifs.com/v2/gifs/${item.rgid}`, {
+            headers: { Authorization: 'Bearer ' + tok }, credentials: 'omit'
+          });
+          if (!r.ok) return;
+          const { gif } = await r.json();
+          item.src     = gif.urls.hd || gif.urls.sd || item.src;
+          item.poster  = gif.poster  || gif.thumbnail || item.poster;
+          item.preview = gif.poster  || gif.thumbnail || item.preview;
+          if (item._thumb) item._thumb.src = item.preview || '';
+          /* Update open lightbox if it's showing this item */
+          if (S.lb && S.lb.list[S.lb.idx] === item) renderLb();
+        } catch { /* keep poster as fallback */ }
+        done++;
+        setProgress('Resolving Redgifs…', `${done} / ${S.rgQueue.length}`, done / S.rgQueue.length);
+      })
+    );
+  }
+}
+
+/* ── Render ──────────────────────────────────────── */
+
+function appendToGrids(batch) {
+  for (const [cat, items] of Object.entries(batch)) {
+    const grid = $('grid-' + cat);
+    for (const item of items) {
+      const card = buildCard(item);
+      item._el   = card;
+      grid.appendChild(card);
+    }
+  }
+}
+
+function buildCard(item) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.addEventListener('click', () => {
+    const list = S.items[item.cat];
+    openLb(list, list.indexOf(item));
+  });
+
+  if (item.cat !== 'images') {
+    const badge = document.createElement('span');
+    badge.className   = 'badge';
+    badge.textContent = item.cat === 'gifs' ? 'GIF' : (item.rgid ? 'REDGIF' : 'VIDEO');
+    card.appendChild(badge);
+  }
+
+  const img = document.createElement('img');
+  img.src            = item.preview || '';
+  img.alt            = item.title;
+  img.loading        = 'lazy';
+  img.referrerPolicy = 'no-referrer';
+  img.addEventListener('error', () => { card.style.display = 'none'; });
+  item._thumb = img;
+  card.appendChild(img);
+
+  const cap = document.createElement('div');
+  cap.className   = 'cap';
+  cap.title       = item.title;
+  cap.textContent = item.title || '(untitled)';
+  card.appendChild(cap);
+
+  return card;
+}
+
+/* ── Lightbox ────────────────────────────────────── */
+
+function openLb(list, idx) {
+  S.lb = { list, idx };
+  renderLb();
+  $('lightbox').removeAttribute('hidden');
+  document.body.style.overflow = 'hidden';
+}
+
+function renderLb() {
+  const { list, idx } = S.lb;
+  const item = list[idx];
+  const lbImg = $('lb-img');
+  const lbVid = $('lb-vid');
+
+  $('lb-title').textContent = item.title || '(untitled)';
+  $('lb-count').textContent = `${idx + 1} / ${list.length}`;
+  $('lb-post').href         = item.postUrl;
+  $('lb-open').href         = item.src || item.preview || '#';
+  $('lb-hint').hidden       = item.cat === 'videos';
+
+  lbVid.pause();
+  lbVid.removeAttribute('src');
+  lbImg.removeAttribute('src');
+  lbImg.hidden = true;
+  lbVid.hidden = true;
+
+  if (item.cat === 'videos') {
+    if (item.src) {
+      lbVid.src    = item.src;
+      lbVid.poster = item.poster || '';
+      lbVid.hidden = false;
+      lbVid.load();
+      lbVid.play().catch(() => {});
+    } else {
+      /* Redgifs not resolved yet — fall back to post */
+      window.open(item.postUrl, '_blank', 'noopener');
+      closeLb();
+      return;
+    }
+  } else {
+    /* Show preview immediately, swap to full-res when loaded */
+    lbImg.src    = item.preview || '';
+    lbImg.hidden = false;
+    if (item.src && item.src !== item.preview) {
+      const full  = new Image();
+      full.onload = () => {
+        if (S.lb && S.lb.list[S.lb.idx] === item) lbImg.src = item.src;
+      };
+      full.src = item.src;
+    }
+  }
+
+  $('lb-prev').style.visibility = idx > 0              ? '' : 'hidden';
+  $('lb-next').style.visibility = idx < list.length - 1 ? '' : 'hidden';
+}
+
+function closeLb() {
+  const vid = $('lb-vid');
+  vid.pause();
+  vid.removeAttribute('src');
+  $('lb-img').removeAttribute('src');
+  $('lightbox').setAttribute('hidden', '');
+  document.body.style.overflow = '';
+  S.lb = null;
+}
+
+function navLb(delta) {
+  if (!S.lb) return;
+  const next = S.lb.idx + delta;
+  if (next < 0 || next >= S.lb.list.length) return;
+  S.lb.idx = next;
+  renderLb();
+}
+
+/* ── Lightbox events ─────────────────────────────── */
+$('lb-close').addEventListener('click', closeLb);
+$('lb-prev').addEventListener('click', () => navLb(-1));
+$('lb-next').addEventListener('click', () => navLb(1));
+$('lightbox').addEventListener('click', e => {
+  if (e.target === $('lightbox') || e.target === $('lb-media')) closeLb();
+});
+document.addEventListener('keydown', e => {
+  if (!S.lb) return;
+  if (e.key === 'Escape')     closeLb();
+  if (e.key === 'ArrowRight') navLb(1);
+  if (e.key === 'ArrowLeft')  navLb(-1);
+});
+
+/* ── Tabs ────────────────────────────────────────── */
+document.querySelectorAll('.tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === btn));
+    const tab = btn.dataset.tab;
+    document.querySelectorAll('.tab-pane').forEach(g => {
+      g.id === 'grid-' + tab ? g.removeAttribute('hidden') : g.setAttribute('hidden', '');
+    });
+  });
+});
+
+/* ── UI helpers ──────────────────────────────────── */
+function updateCounts() {
+  ['images', 'gifs', 'videos'].forEach(c => {
+    $('cnt-' + c).textContent = S.items[c].length;
+  });
+}
+
+function setProgress(label, detail, pct) {
+  $('progress-area').removeAttribute('hidden');
+  $('prog-label').textContent  = label;
+  $('prog-detail').textContent = detail || '';
+  const fill = $('prog-fill');
+  fill.className   = pct >= 1 ? 'done' : '';
+  fill.style.width = pct === null ? '35%' : Math.round(pct * 100) + '%';
+}
+
+function showError(msg) {
+  const area = $('error-area');
+  area.innerHTML = '<div class="err-box"></div>';
+  area.firstChild.textContent = msg;
+  area.removeAttribute('hidden');
+}
+
+/* ── Entry point ─────────────────────────────────── */
+scrapeBtn.addEventListener('click', startScrape);
+usernameEl.addEventListener('keydown', e => { if (e.key === 'Enter') startScrape(); });
+
+async function startScrape() {
+  const user = usernameEl.value.trim().replace(/^u\//, '');
+  if (!user || S.loading) return;
+
+  S = mkState();
+  S.user    = user;
+  S.loading = true;
+
+  scrapeBtn.disabled = true;
+  $('error-area').setAttribute('hidden', '');
+  $('empty-notice').setAttribute('hidden', '');
+  $('main').removeAttribute('hidden');
+  $('grid-images').innerHTML = '';
+  $('grid-gifs').innerHTML   = '';
+  $('grid-videos').innerHTML = '';
+  updateCounts();
+  /* Reset to Images tab */
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'images'));
+  document.querySelectorAll('.tab-pane').forEach(g => {
+    g.id === 'grid-images' ? g.removeAttribute('hidden') : g.setAttribute('hidden', '');
+  });
+
+  try {
+    await fetchAllPosts();
+
+    if (total() === 0) {
+      $('empty-notice').removeAttribute('hidden');
+      $('progress-area').setAttribute('hidden', '');
+      return;
+    }
+
+    if (S.rgQueue.length) await resolveRedgifs();
+    setProgress(`Done — ${total()} items found`, '', 1);
+
+  } catch (err) {
+    showError(err.message);
+    $('progress-area').setAttribute('hidden', '');
+  } finally {
+    S.loading          = false;
+    scrapeBtn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>
