@@ -923,37 +923,77 @@ function slug(s) {
     .replace(/^-|-$/g, '') || 'media';
 }
 
-/* preview.redd.it URLs are CORS-blocked by fetch() but the same
-   file exists on i.redd.it without any auth token. */
+/* preview.redd.it URLs are CORS-blocked by fetch(). The same file
+   lives on i.redd.it without auth tokens. */
 function toDirectUrl(url) {
   if (!url) return null;
-  if (/^https?:\/\/i\.redd\.it\//i.test(url))    return url;
-  if (/^https?:\/\/i\.imgur\.com\//i.test(url))  return url;
+  if (/^https?:\/\/i\.redd\.it\//i.test(url))   return url;
+  if (/^https?:\/\/i\.imgur\.com\//i.test(url)) return url;
   const m = url.match(/\/([a-zA-Z0-9]+\.(?:jpe?g|png|gif|webp))(?:\?|$)/i);
   return m ? `https://i.redd.it/${m[1]}` : null;
+}
+
+const DL_PROXIES = [
+  u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+  u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+];
+
+/* Last-resort: draw into canvas (works when server has ACAO:*) */
+function canvasBlob(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const c = document.createElement('canvas');
+        c.width  = img.naturalWidth;
+        c.height = img.naturalHeight;
+        c.getContext('2d').drawImage(img, 0, 0);
+        c.toBlob(b => b ? resolve(b) : reject(new Error('null blob')),
+          /\.png(\?|$)/i.test(url) ? 'image/png' : 'image/jpeg', 0.93);
+      } catch (e) { reject(e); }
+    };
+    img.onerror = () => reject(new Error('img load failed'));
+    img.src = url;
+  });
 }
 
 async function fetchBlob(url) {
   const direct     = toDirectUrl(url);
   const candidates = [...new Set([direct, url].filter(Boolean))];
+  const isAnim     = /\.(gif|mp4|webm)(\?|$)/i.test(url);
+  const errors     = [];
 
-  /* 1 — try direct (i.redd.it has ACAO:* so this usually works) */
+  /* 1 — direct fetch */
   for (const u of candidates) {
     try {
       const r = await fetch(u, { credentials: 'omit' });
       if (r.ok) return r.blob();
-    } catch { /* try next */ }
+      errors.push(`${u} → HTTP ${r.status}`);
+    } catch (e) { errors.push(`${u} → ${e.message}`); }
   }
 
-  /* 2 — CORS proxy fallback */
-  for (const u of candidates) {
-    try {
-      const r = await fetch(PROXY(u), { credentials: 'omit' });
-      if (r.ok) return r.blob();
-    } catch { /* try next */ }
+  /* 2 — CORS proxies */
+  for (const px of DL_PROXIES) {
+    for (const u of candidates) {
+      try {
+        const r = await fetch(px(u), { credentials: 'omit' });
+        if (r.ok) return r.blob();
+        errors.push(`proxy(${u}) → HTTP ${r.status}`);
+      } catch (e) { errors.push(`proxy(${u}) → ${e.message}`); }
+    }
   }
 
-  throw new Error('all attempts failed: ' + url);
+  /* 3 — canvas (static images only) */
+  if (!isAnim) {
+    for (const u of candidates) {
+      try { return await canvasBlob(u); }
+      catch (e) { errors.push(`canvas(${u}) → ${e.message}`); }
+    }
+  }
+
+  console.error('[fetchBlob] all attempts failed for', url, errors);
+  throw new Error(errors[0] || 'fetch failed');
 }
 
 /* ── Download selected ───────────────────────────── */
@@ -983,7 +1023,7 @@ async function downloadSelected() {
         const wr   = await fh.createWritable();
         await wr.write(blob);
         await wr.close();
-      } catch { failed++; }
+      } catch (e) { console.error('[Folder] skipped item:', item.src || item.preview, e); failed++; }
       done++;
     }
     setProgress(`Saved ${done - failed} / ${n} files`, '', 1);
@@ -1000,7 +1040,7 @@ async function downloadSelected() {
         const ext  = blobExt(blob, url);
         const name = `${String(done + 1).padStart(4, '0')}_${slug(item.title)}.${ext}`;
         zip.file(name, await blob.arrayBuffer());
-      } catch { failed++; }
+      } catch (e) { console.error('[ZIP] skipped item:', item.src || item.preview, e); failed++; }
       done++;
     }
     setProgress('Building ZIP…', '', 0.99);
