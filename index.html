@@ -727,16 +727,8 @@ function renderLb() {
       return;
     }
   } else {
-    /* Show preview immediately, swap to full-res when loaded */
-    lbImg.src    = item.preview || '';
+    lbImg.src    = item.src || item.preview || '';
     lbImg.hidden = false;
-    if (item.src && item.src !== item.preview) {
-      const full  = new Image();
-      full.onload = () => {
-        if (S.lb && S.lb.list[S.lb.idx] === item) lbImg.src = item.src;
-      };
-      full.src = item.src;
-    }
   }
 
   $('lb-prev').style.visibility = idx > 0              ? '' : 'hidden';
