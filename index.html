@@ -204,7 +204,7 @@
     }
     .post-group-header a:hover { text-decoration: underline; }
 
-    .post-grid {
+    .post-grid, .flat-grid {
       columns: 6 150px;
       column-gap: 8px;
     }
@@ -430,7 +430,7 @@
 
     /* ── Responsive ──────────────────────────────── */
     @media (max-width: 600px) {
-      .post-grid { columns: 2 120px; }
+      .post-grid, .flat-grid { columns: 2 120px; }
       #lb-media { max-width: 100vw; }
       .lb-nav { padding: 12px 9px; font-size: 1.5rem; }
     }
@@ -476,8 +476,8 @@
     </button>
   </div>
   <div id="grid-images" class="grid tab-pane"></div>
-  <div id="grid-gifs"   class="grid tab-pane" hidden></div>
-  <div id="grid-videos" class="grid tab-pane" hidden></div>
+  <div id="grid-gifs"   class="flat-grid tab-pane" hidden></div>
+  <div id="grid-videos" class="flat-grid tab-pane" hidden></div>
   <div id="empty-notice" hidden>No images, GIFs, or videos found for this user.</div>
 </div>
 
@@ -766,10 +766,13 @@ function getOrCreatePostGroup(cat, postUrl, title) {
 function appendToGrids(batch) {
   for (const [cat, items] of Object.entries(batch)) {
     for (const item of items) {
-      const postGrid = getOrCreatePostGroup(cat, item.postUrl, item.title);
       const card = buildCard(item);
       item._el   = card;
-      postGrid.appendChild(card);
+      if (cat === 'images') {
+        getOrCreatePostGroup(cat, item.postUrl, item.title).appendChild(card);
+      } else {
+        $('grid-' + cat).appendChild(card);
+      }
     }
   }
 }
