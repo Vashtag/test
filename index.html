@@ -700,42 +700,48 @@ function linkify(text) {
   return out + htmlEsc(text.slice(last));
 }
 
+/* Walk a JSON string to extract the array value for a given key. */
+function extractJsonArray(str, key) {
+  const idx = str.indexOf(`"${key}":`);
+  if (idx === -1) return null;
+  const start = str.indexOf('[', idx);
+  if (start === -1) return null;
+  let depth = 0;
+  for (let i = start; i < str.length; i++) {
+    if (str[i] === '[') depth++;
+    else if (str[i] === ']' && --depth === 0) return str.slice(start, i + 1);
+  }
+  return null;
+}
+
 async function fetchUserProfile(user) {
   try {
-    const aboutUrl  = `https://www.reddit.com/user/${encodeURIComponent(user)}/about.json?raw_json=1`;
-    const widgetUrl = `https://www.reddit.com/r/u_${encodeURIComponent(user.toLowerCase())}/api/widgets?raw_json=1`;
+    const aboutUrl   = `https://www.reddit.com/user/${encodeURIComponent(user)}/about.json?raw_json=1`;
+    const profileUrl = `https://www.reddit.com/user/${encodeURIComponent(user)}/`;
 
-    const [aboutRes, widgetRes] = await Promise.allSettled([
+    const [aboutRes, pageRes] = await Promise.allSettled([
       apiFetch(aboutUrl),
-      apiFetch(widgetUrl),
+      fetch(PROXY(profileUrl), BASE_OPTS),
     ]);
 
     if (aboutRes.status !== 'fulfilled' || !aboutRes.value.ok) return;
     const { data } = await aboutRes.value.json();
 
-    /* Extract social/button links from profile widgets */
+    /* Extract social links from the JSON Reddit embeds in the profile page */
     const socialLinks = [];
-    if (widgetRes.status === 'fulfilled' && widgetRes.value.ok) {
+    if (pageRes.status === 'fulfilled' && pageRes.value.ok) {
       try {
-        const wJson = await widgetRes.value.json();
-        console.log('[profile widgets raw]', wJson);
-        /* Reddit returns items at root level or nested under .data */
-        const items = wJson?.items || wJson?.data?.items || {};
-        for (const widget of Object.values(items)) {
-          console.log('[widget]', widget.kind, widget);
-          if (widget.kind === 'button') {
-            for (const btn of (widget.buttons || [])) {
-              if (btn.url?.startsWith('http'))
-                socialLinks.push({ text: btn.text || btn.url, url: btn.url });
-            }
+        const html = await pageRes.value.text();
+        const raw  = extractJsonArray(html, 'socialLinks');
+        if (raw) {
+          for (const l of JSON.parse(raw)) {
+            const url = l.outboundUrl || l.url;
+            if (url?.startsWith('http'))
+              socialLinks.push({ text: l.displayText || l.title || url, url });
           }
-          /* Catch any other widget kind that has a direct url */
-          if (widget.url?.startsWith('http'))
-            socialLinks.push({ text: widget.shortName || widget.text || widget.url, url: widget.url });
         }
-      } catch (e) { console.warn('[widgets parse error]', e); }
+      } catch { /* silently skip */ }
     }
-    console.log('[socialLinks]', socialLinks);
 
     const avatarUrl = (data.icon_img || data.snoovatar_img || '').replace(/\?.*$/, '');
     const bio       = (data.subreddit?.public_description || '').trim();
