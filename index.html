@@ -309,6 +309,52 @@
     #select-btn:hover:not(:disabled) { background: var(--bg); border-color: var(--muted); }
     #select-btn.active { border-color: var(--accent); color: var(--accent); }
 
+    /* ── Profile card ───────────────────────────────*/
+    #profile-card {
+      max-width: 1400px;
+      margin: 14px auto 0;
+      padding: 0 24px;
+    }
+
+    .profile-inner {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 18px;
+    }
+
+    #profile-avatar {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+      background: var(--border);
+    }
+
+    .profile-info { min-width: 0; }
+
+    #profile-name {
+      font-weight: 600;
+      font-size: 0.95rem;
+      margin-bottom: 4px;
+    }
+    #profile-name a { color: var(--text); text-decoration: none; }
+    #profile-name a:hover { color: var(--accent); }
+
+    #profile-bio {
+      font-size: 0.83rem;
+      color: var(--muted);
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    #profile-bio a { color: var(--blue); text-decoration: none; }
+    #profile-bio a:hover { text-decoration: underline; }
+
     /* ── Empty state ─────────────────────────────── */
     #empty-notice {
       text-align: center;
@@ -450,6 +496,17 @@
   </div>
 </header>
 
+<!-- ── Profile card ───────────────────────────────── -->
+<div id="profile-card" hidden>
+  <div class="profile-inner">
+    <img id="profile-avatar" referrerpolicy="no-referrer" alt="" />
+    <div class="profile-info">
+      <div id="profile-name"></div>
+      <div id="profile-bio"></div>
+    </div>
+  </div>
+</div>
+
 <!-- ── Progress ───────────────────────────────────── -->
 <div id="progress-area" hidden>
   <div class="prog-row">
@@ -585,6 +642,48 @@ function rgIdOf(url) {
 
 function total() {
   return S.items.images.length + S.items.gifs.length + S.items.videos.length;
+}
+
+/* ── Profile ─────────────────────────────────────── */
+
+function htmlEsc(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function linkify(text) {
+  const urlRe = /https?:\/\/[^\s\])"]+/g;
+  let out = '', last = 0, m;
+  while ((m = urlRe.exec(text)) !== null) {
+    out += htmlEsc(text.slice(last, m.index));
+    const safeHref = htmlEsc(m[0].replace(/"/g, '%22'));
+    out += `<a href="${safeHref}" target="_blank" rel="noopener" referrerpolicy="no-referrer">${htmlEsc(m[0])}</a>`;
+    last = m.index + m[0].length;
+  }
+  return out + htmlEsc(text.slice(last));
+}
+
+async function fetchUserProfile(user) {
+  try {
+    const res = await apiFetch(`https://www.reddit.com/user/${encodeURIComponent(user)}/about.json?raw_json=1`);
+    if (!res.ok) return;
+    const { data } = await res.json();
+
+    const avatarUrl = (data.icon_img || data.snoovatar_img || '').replace(/\?.*$/, '');
+    const bio       = (data.subreddit?.public_description || '').trim();
+    const name      = data.name || user;
+
+    $('profile-avatar').src = avatarUrl || '';
+    $('profile-avatar').hidden = !avatarUrl;
+
+    $('profile-name').innerHTML =
+      `<a href="https://www.reddit.com/user/${htmlEsc(name)}" target="_blank" rel="noopener" referrerpolicy="no-referrer">u/${htmlEsc(name)}</a>`;
+
+    const bioEl = $('profile-bio');
+    bioEl.innerHTML  = bio ? linkify(bio) : '';
+    bioEl.hidden     = !bio;
+
+    $('profile-card').removeAttribute('hidden');
+  } catch { /* profile is optional — silently skip on error */ }
 }
 
 /* ── Extraction ──────────────────────────────────── */
@@ -1232,6 +1331,7 @@ async function startScrape() {
 
   scrapeBtn.disabled = true;
   $('error-area').setAttribute('hidden', '');
+  $('profile-card').setAttribute('hidden', '');
   $('empty-notice').setAttribute('hidden', '');
   $('main').removeAttribute('hidden');
   $('grid-images').innerHTML = '';
@@ -1245,6 +1345,7 @@ async function startScrape() {
   });
 
   try {
+    fetchUserProfile(S.user); /* fire-and-forget — don't block scraping */
     await fetchAllPosts();
 
     if (total() === 0) {
