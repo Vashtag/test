@@ -61,6 +61,28 @@
       min-width: 240px;
     }
 
+    .mode-toggle {
+      display: flex;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .mode-btn {
+      padding: 9px 14px;
+      background: none;
+      border: none;
+      border-radius: 0;
+      color: var(--muted);
+      font-size: 0.85rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .mode-btn:hover:not(:disabled) { background: var(--bg); color: var(--text); }
+    .mode-btn.active { background: var(--accent); color: #fff; }
+    .mode-btn.active:hover:not(:disabled) { background: var(--accentH); }
+
     input[type="text"] {
       flex: 1;
       padding: 9px 14px;
@@ -493,6 +515,10 @@
   <div class="hdr">
     <h1>Reddit Media Scraper</h1>
     <div class="search-row">
+      <div class="mode-toggle">
+        <button id="mode-user" class="mode-btn active">u/</button>
+        <button id="mode-sub"  class="mode-btn">r/</button>
+      </div>
       <input type="text" id="username" placeholder="Reddit username (e.g. spez)" autocomplete="off" spellcheck="false" />
       <button id="scrape-btn">Scrape</button>
       <button id="select-btn" hidden>Select</button>
@@ -602,6 +628,7 @@ let S = mkState();
 
 let _rgToken = null, _rgTokenTs = 0;
 let _useProxy = false;
+let _mode = 'user'; /* 'user' | 'subreddit' */
 
 /* ── Fetch with CORS-proxy fallback ──────────────── */
 const PROXY = u => 'https://corsproxy.io/?' + encodeURIComponent(u);
@@ -831,17 +858,21 @@ function extractPost(d) {
 
 async function fetchAllPosts() {
   let after = '', page = 0;
+  const isSub  = _mode === 'subreddit';
+  const baseUrl = isSub
+    ? `https://www.reddit.com/r/${encodeURIComponent(S.user)}/hot.json`
+    : `https://www.reddit.com/user/${encodeURIComponent(S.user)}/submitted.json`;
 
   while (page < CFG.maxPages) {
     page++;
     setProgress('Collecting posts…', `Page ${page} · ${total()} items`, null);
 
     const qs  = `limit=${CFG.pageLimit}&raw_json=1${after ? '&after=' + after : ''}`;
-    const url = `https://www.reddit.com/user/${encodeURIComponent(S.user)}/submitted.json?${qs}`;
+    const url = `${baseUrl}?${qs}`;
     const res = await apiFetch(url);
 
-    if (res.status === 404) throw new Error(`User u/${S.user} not found.`);
-    if (res.status === 403) throw new Error(`u/${S.user}'s profile is private.`);
+    if (res.status === 404) throw new Error(isSub ? `r/${S.user} not found.` : `User u/${S.user} not found.`);
+    if (res.status === 403) throw new Error(isSub ? `r/${S.user} is private or quarantined.` : `u/${S.user}'s profile is private.`);
     if (!res.ok)            throw new Error(`Reddit API error (HTTP ${res.status}).`);
 
     const json  = await res.json();
@@ -1359,6 +1390,20 @@ function showError(msg) {
   area.removeAttribute('hidden');
 }
 
+/* ── Mode toggle ─────────────────────────────────── */
+$('mode-user').addEventListener('click', () => {
+  _mode = 'user';
+  $('mode-user').classList.add('active');
+  $('mode-sub').classList.remove('active');
+  usernameEl.placeholder = 'Reddit username (e.g. spez)';
+});
+$('mode-sub').addEventListener('click', () => {
+  _mode = 'subreddit';
+  $('mode-sub').classList.add('active');
+  $('mode-user').classList.remove('active');
+  usernameEl.placeholder = 'Subreddit name (e.g. pics)';
+});
+
 /* ── Entry point ─────────────────────────────────── */
 scrapeBtn.addEventListener('click', startScrape);
 usernameEl.addEventListener('keydown', e => { if (e.key === 'Enter') startScrape(); });
@@ -1393,7 +1438,7 @@ async function startScrape() {
   });
 
   try {
-    fetchUserProfile(S.user); /* fire-and-forget — don't block scraping */
+    if (_mode === 'user') fetchUserProfile(S.user); /* fire-and-forget */
     await fetchAllPosts();
 
     if (total() === 0) {
