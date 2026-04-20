@@ -1079,8 +1079,12 @@ function buildCard(item) {
   card.className = 'card';
   card.addEventListener('click', () => {
     if (S.selecting) { toggleCard(item); return; }
+    /* Redgifs: always open native page — better quality & avoids CORS */
+    if (item.rgid) {
+      window.open(`https://www.redgifs.com/watch/${item.rgid}`, '_blank', 'noopener noreferrer');
+      return;
+    }
     if (_mode === 'subreddit') {
-      /* Open lightbox scoped to this post's items */
       const postItems = S.postItemsMap[item.cat].get(item.postUrl) || [item];
       openLb(postItems, 0);
     } else {
@@ -1158,8 +1162,11 @@ function renderLb() {
       lbVid.load();
       lbVid.play().catch(() => {});
     } else {
-      /* Redgifs not resolved yet — fall back to post */
-      window.open(item.postUrl, '_blank', 'noopener');
+      /* Src not resolved — open redgif page if available, else reddit post */
+      const dest = item.rgid
+        ? `https://www.redgifs.com/watch/${item.rgid}`
+        : item.postUrl;
+      window.open(dest, '_blank', 'noopener noreferrer');
       closeLb();
       return;
     }
@@ -1288,6 +1295,20 @@ function blobExt(blob, url) {
   return m ? m[1].replace('jpeg','jpg') : 'jpg';
 }
 
+/* Trigger a browser-native download for a URL (bypasses CORS blob requirement).
+   Works reliably for same-origin and some CDNs that send Content-Disposition. */
+function anchorDownload(url, filename) {
+  const a = Object.assign(document.createElement('a'), {
+    href     : url,
+    download : filename,
+    target   : '_blank',
+    rel      : 'noopener noreferrer',
+  });
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
 function slug(s) {
   return (s || 'media').replace(/[^a-z0-9]+/gi, '-').slice(0, 50)
     .replace(/^-|-$/g, '') || 'media';
@@ -1354,27 +1375,37 @@ function canvasBlob(url) {
   });
 }
 
+/* Stream response body in chunks — avoids proxy timeouts on large video files */
+async function streamBlob(response) {
+  const reader = response.body?.getReader();
+  if (!reader) return response.blob();
+  const chunks = [];
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  return new Blob(chunks, { type: response.headers.get('content-type') || 'video/mp4' });
+}
+
 async function fetchBlob(url) {
   const isVideo    = /\.(mp4|webm|mov)(\?|$)/i.test(url);
   const direct     = toDirectUrl(url);
   const candidates = [...new Set([direct, url].filter(Boolean))];
 
-  /* For Redgifs, also try the thumbs2 CDN — different origin, different CORS policy */
-  if (/^https?:\/\/media\.redgifs\.com\//i.test(url)) {
+  if (/^https?:\/\/media\.redgifs\.com\//i.test(url))
     candidates.push(url.replace('media.redgifs.com', 'thumbs2.redgifs.com'));
-  }
 
   const isAnim  = isVideo || /\.gif(\?|$)/i.test(url);
   const errors  = [];
-
-  /* wsrv.nl is image-only — skip it for video */
   const proxies = isVideo ? DL_PROXIES.slice(1) : DL_PROXIES;
+  const read    = r => isVideo ? streamBlob(r) : r.blob();
 
-  /* 1 — direct fetch (no referrer so CDN can't identify the download source) */
+  /* 1 — direct */
   for (const u of candidates) {
     try {
       const r = await fetch(u, BASE_OPTS);
-      if (r.ok) return r.blob();
+      if (r.ok) return read(r);
       errors.push(`${u} → HTTP ${r.status}`);
     } catch (e) { errors.push(`${u} → ${e.message}`); }
   }
@@ -1384,13 +1415,13 @@ async function fetchBlob(url) {
     for (const u of candidates) {
       try {
         const r = await fetch(px(u), BASE_OPTS);
-        if (r.ok) return r.blob();
+        if (r.ok) return read(r);
         errors.push(`proxy(${u}) → HTTP ${r.status}`);
       } catch (e) { errors.push(`proxy(${u}) → ${e.message}`); }
     }
   }
 
-  /* 3 — canvas (static images only) */
+  /* 3 — canvas re-encode (static images only) */
   if (!isAnim) {
     for (const u of candidates) {
       try { return await canvasBlob(u); }
@@ -1465,10 +1496,15 @@ async function downloadSelected() {
         const wr   = await fh.createWritable();
         await wr.write(blob);
         await wr.close();
-      } catch (e) { console.error('[Folder] skipped item:', item.src || item.preview, e); failed++; }
+      } catch (e) {
+        console.error('[Folder] skipped item:', item.src || item.preview, e);
+        /* Last resort for videos: trigger browser download via anchor */
+        if (item.cat === 'videos' && item.src) anchorDownload(item.src, slug(item.title) + '.mp4');
+        failed++;
+      }
       done++;
     }
-    setProgress(`Saved ${done - failed} / ${n} files`, '', 1);
+    setProgress(`Saved ${done - failed} / ${n} files`, failed ? ` (${failed} opened as tab)` : '', 1);
 
   } else {
     /* ── ZIP fallback (Firefox / Safari) ── */
@@ -1483,7 +1519,11 @@ async function downloadSelected() {
         const ext  = blobExt(blob, url);
         const name = `${String(done + 1).padStart(4, '0')}_${slug(item.title)}.${ext}`;
         zip.file(name, await blob.arrayBuffer());
-      } catch (e) { console.error('[ZIP] skipped item:', item.src || item.preview, e); failed++; }
+      } catch (e) {
+        console.error('[ZIP] skipped item:', item.src || item.preview, e);
+        if (item.cat === 'videos' && item.src) anchorDownload(item.src, slug(item.title) + '.mp4');
+        failed++;
+      }
       done++;
     }
     setProgress('Building ZIP…', '', 0.99);
