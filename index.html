@@ -606,11 +606,26 @@ const BASE_OPTS = { credentials: 'omit', referrerPolicy: 'no-referrer' };
 
 async function apiFetch(url, opts = {}) {
   const go = u => fetch(u, { ...BASE_OPTS, ...opts });
-  if (!_useProxy) {
-    try { return await go(url); }
-    catch { _useProxy = true; }
+
+  async function withRetry(u) {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const r = await go(u);
+      if (r.status !== 429) return r;
+      const secs = Math.min(parseInt(r.headers.get('Retry-After') || '') || 10, 60);
+      setProgress('Rate limited by Reddit…', `Retrying in ${secs}s…`, null);
+      await sleep(secs * 1000);
+    }
+    return go(u);
   }
-  return go(PROXY(url));
+
+  if (!_useProxy) {
+    try {
+      const r = await withRetry(url);
+      if (r.status !== 429) return r;
+      _useProxy = true; /* still throttled after retries — switch to proxy */
+    } catch { _useProxy = true; }
+  }
+  return withRetry(PROXY(url));
 }
 
 /* ── DOM helpers ─────────────────────────────────── */
