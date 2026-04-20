@@ -180,6 +180,31 @@
 
     /* ── Grid ────────────────────────────────────── */
     .grid {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .post-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .post-group-header {
+      font-size: 0.78rem;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .post-group-header a {
+      color: var(--blue);
+      text-decoration: none;
+    }
+    .post-group-header a:hover { text-decoration: underline; }
+
+    .post-grid {
       columns: 6 150px;
       column-gap: 8px;
     }
@@ -405,7 +430,7 @@
 
     /* ── Responsive ──────────────────────────────── */
     @media (max-width: 600px) {
-      .grid { columns: 2 120px; }
+      .post-grid { columns: 2 120px; }
       #lb-media { max-width: 100vw; }
       .lb-nav { padding: 12px 9px; font-size: 1.5rem; }
     }
@@ -501,13 +526,14 @@ const CFG = {
 /* ── State ───────────────────────────────────────── */
 function mkState() {
   return {
-    user      : '',
-    loading   : false,
-    items     : { images: [], gifs: [], videos: [] },
-    rgQueue   : [],
-    lb        : null,
-    selecting : false,
-    selected  : new Set(),
+    user       : '',
+    loading    : false,
+    items      : { images: [], gifs: [], videos: [] },
+    postGroups : { images: new Map(), gifs: new Map(), videos: new Map() },
+    rgQueue    : [],
+    lb         : null,
+    selecting  : false,
+    selected   : new Set(),
   };
 }
 let S = mkState();
@@ -710,13 +736,40 @@ async function resolveRedgifs() {
 
 /* ── Render ──────────────────────────────────────── */
 
+function getOrCreatePostGroup(cat, postUrl, title) {
+  const groups = S.postGroups[cat];
+  if (groups.has(postUrl)) return groups.get(postUrl);
+
+  const group = document.createElement('div');
+  group.className = 'post-group';
+
+  const header = document.createElement('div');
+  header.className = 'post-group-header';
+  const a = document.createElement('a');
+  a.href            = postUrl;
+  a.target          = '_blank';
+  a.rel             = 'noopener';
+  a.referrerPolicy  = 'no-referrer';
+  a.textContent     = title || postUrl;
+  header.appendChild(a);
+  group.appendChild(header);
+
+  const postGrid = document.createElement('div');
+  postGrid.className = 'post-grid';
+  group.appendChild(postGrid);
+
+  $('grid-' + cat).appendChild(group);
+  groups.set(postUrl, postGrid);
+  return postGrid;
+}
+
 function appendToGrids(batch) {
   for (const [cat, items] of Object.entries(batch)) {
-    const grid = $('grid-' + cat);
     for (const item of items) {
+      const postGrid = getOrCreatePostGroup(cat, item.postUrl, item.title);
       const card = buildCard(item);
       item._el   = card;
-      grid.appendChild(card);
+      postGrid.appendChild(card);
     }
   }
 }
