@@ -703,7 +703,7 @@ function linkify(text) {
 async function fetchUserProfile(user) {
   try {
     const aboutUrl  = `https://www.reddit.com/user/${encodeURIComponent(user)}/about.json?raw_json=1`;
-    const widgetUrl = `https://www.reddit.com/r/u_${encodeURIComponent(user.toLowerCase())}/api/widgets.json?raw_json=1`;
+    const widgetUrl = `https://www.reddit.com/r/u_${encodeURIComponent(user.toLowerCase())}/api/widgets?raw_json=1`;
 
     const [aboutRes, widgetRes] = await Promise.allSettled([
       apiFetch(aboutUrl),
@@ -717,17 +717,25 @@ async function fetchUserProfile(user) {
     const socialLinks = [];
     if (widgetRes.status === 'fulfilled' && widgetRes.value.ok) {
       try {
-        const wdata = (await widgetRes.value.json())?.data;
-        for (const widget of Object.values(wdata?.items || {})) {
+        const wJson = await widgetRes.value.json();
+        console.log('[profile widgets raw]', wJson);
+        /* Reddit returns items at root level or nested under .data */
+        const items = wJson?.items || wJson?.data?.items || {};
+        for (const widget of Object.values(items)) {
+          console.log('[widget]', widget.kind, widget);
           if (widget.kind === 'button') {
             for (const btn of (widget.buttons || [])) {
               if (btn.url?.startsWith('http'))
                 socialLinks.push({ text: btn.text || btn.url, url: btn.url });
             }
           }
+          /* Catch any other widget kind that has a direct url */
+          if (widget.url?.startsWith('http'))
+            socialLinks.push({ text: widget.shortName || widget.text || widget.url, url: widget.url });
         }
-      } catch {}
+      } catch (e) { console.warn('[widgets parse error]', e); }
     }
+    console.log('[socialLinks]', socialLinks);
 
     const avatarUrl = (data.icon_img || data.snoovatar_img || '').replace(/\?.*$/, '');
     const bio       = (data.subreddit?.public_description || '').trim();
