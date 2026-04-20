@@ -380,6 +380,29 @@
     }
     #profile-links a:hover { border-color: var(--blue); background: rgba(88,166,255,.14); }
 
+    /* ── Load More ──────────────────────────────────*/
+    .load-more-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      padding: 24px 0 8px;
+      font-size: 0.83rem;
+      color: var(--muted);
+    }
+    #load-more-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 0.83rem;
+      padding: 7px 22px;
+    }
+    #load-more-btn:hover:not(:disabled) {
+      background: none;
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
     /* ── Empty state ─────────────────────────────── */
     #empty-notice {
       text-align: center;
@@ -566,6 +589,10 @@
   <div id="grid-images" class="grid tab-pane"></div>
   <div id="grid-gifs"   class="flat-grid tab-pane" hidden></div>
   <div id="grid-videos" class="flat-grid tab-pane" hidden></div>
+  <div class="load-more-row" id="load-more-row" hidden>
+    <span id="load-more-count"></span>
+    <button id="load-more-btn">Load 200 more</button>
+  </div>
   <div id="empty-notice" hidden>No images, GIFs, or videos found for this user.</div>
 </div>
 
@@ -609,19 +636,24 @@ const CFG = {
   apiDelay  : 350,
   rgBatch   : 4,
   rgTtl     : 5 * 60 * 1000,
+  pageSize  : 200,
 };
 
 /* ── State ───────────────────────────────────────── */
 function mkState() {
   return {
-    user       : '',
-    loading    : false,
-    items      : { images: [], gifs: [], videos: [] },
-    postGroups : { images: new Map(), gifs: new Map(), videos: new Map() },
-    rgQueue    : [],
-    lb         : null,
-    selecting  : false,
-    selected   : new Set(),
+    user          : '',
+    loading       : false,
+    items         : { images: [], gifs: [], videos: [] },
+    postGroups    : { images: new Map(), gifs: new Map(), videos: new Map() },
+    /* subreddit mode: all items per post, ordered post list, rendered post count */
+    postItemsMap  : { images: new Map(), gifs: new Map(), videos: new Map() },
+    subPostOrder  : { images: [], gifs: [], videos: [] },
+    rendered      : { images: 0, gifs: 0, videos: 0 },
+    rgQueue       : [],
+    lb            : null,
+    selecting     : false,
+    selected      : new Set(),
   };
 }
 let S = mkState();
@@ -941,6 +973,60 @@ function appendToGrids(batch) {
   for (const [cat, items] of Object.entries(batch)) {
     const container = $('grid-' + cat);
     for (const item of items) {
+      if (_mode === 'subreddit') {
+        /* Track all items per post */
+        if (!S.postItemsMap[cat].has(item.postUrl)) {
+          S.postItemsMap[cat].set(item.postUrl, []);
+          S.subPostOrder[cat].push(item.postUrl);
+          /* Render one thumbnail per post, up to the page limit */
+          if (S.rendered[cat] < CFG.pageSize) {
+            const card = buildCard(item);
+            item._el = card;
+            container.appendChild(card);
+            S.rendered[cat]++;
+          }
+        }
+        S.postItemsMap[cat].get(item.postUrl).push(item);
+      } else {
+        /* User mode: render each item up to the page limit */
+        if (S.rendered[cat] < CFG.pageSize) {
+          const card = buildCard(item);
+          item._el = card;
+          if (cat === 'images') {
+            const isNew = !S.postGroups[cat].has(item.postUrl);
+            if (isNew) {
+              S.postGroups[cat].set(item.postUrl, true);
+              if (container.children.length > 0) card.classList.add('post-first');
+            }
+          }
+          container.appendChild(card);
+          S.rendered[cat]++;
+        }
+      }
+    }
+  }
+  updateLoadMore();
+}
+
+function loadMore(cat) {
+  const container = $('grid-' + cat);
+  if (_mode === 'subreddit') {
+    const start = S.rendered[cat];
+    const end   = Math.min(start + CFG.pageSize, S.subPostOrder[cat].length);
+    for (let i = start; i < end; i++) {
+      const postUrl  = S.subPostOrder[cat][i];
+      const postItems = S.postItemsMap[cat].get(postUrl);
+      const item = postItems[0];
+      const card = buildCard(item);
+      item._el = card;
+      container.appendChild(card);
+      S.rendered[cat]++;
+    }
+  } else {
+    const start = S.rendered[cat];
+    const end   = Math.min(start + CFG.pageSize, S.items[cat].length);
+    for (let i = start; i < end; i++) {
+      const item = S.items[cat][i];
       const card = buildCard(item);
       item._el = card;
       if (cat === 'images') {
@@ -951,6 +1037,39 @@ function appendToGrids(batch) {
         }
       }
       container.appendChild(card);
+      S.rendered[cat]++;
+    }
+  }
+  updateLoadMore();
+}
+
+function getActiveTab() {
+  return document.querySelector('.tab.active')?.dataset.tab || 'images';
+}
+
+function updateLoadMore() {
+  const cat      = getActiveTab();
+  const total    = _mode === 'subreddit' ? S.subPostOrder[cat].length : S.items[cat].length;
+  const rendered = S.rendered[cat];
+  const row      = $('load-more-row');
+  if (rendered < total) {
+    $('load-more-count').textContent = `Showing ${rendered} of ${total}`;
+    $('load-more-btn').textContent   = `Load ${Math.min(CFG.pageSize, total - rendered)} more`;
+    row.removeAttribute('hidden');
+  } else {
+    row.setAttribute('hidden', '');
+  }
+}
+
+function updateSubBadges() {
+  if (_mode !== 'subreddit') return;
+  for (const cat of ['images', 'gifs', 'videos']) {
+    for (const [, postItems] of S.postItemsMap[cat]) {
+      const first = postItems[0];
+      if (first._badge && postItems.length > 1) {
+        const n = postItems.length;
+        first._badge.textContent = `${n} ${cat === 'images' ? 'img' : cat === 'gifs' ? 'GIF' : 'vid'}${n > 1 ? 's' : ''}`;
+      }
     }
   }
 }
@@ -960,20 +1079,31 @@ function buildCard(item) {
   card.className = 'card';
   card.addEventListener('click', () => {
     if (S.selecting) { toggleCard(item); return; }
-    const list = S.items[item.cat];
-    openLb(list, list.indexOf(item));
+    if (_mode === 'subreddit') {
+      /* Open lightbox scoped to this post's items */
+      const postItems = S.postItemsMap[item.cat].get(item.postUrl) || [item];
+      openLb(postItems, 0);
+    } else {
+      const list = S.items[item.cat];
+      openLb(list, list.indexOf(item));
+    }
   });
 
   const chk = document.createElement('div');
   chk.className = 'chk';
   card.appendChild(chk);
 
-  if (item.cat !== 'images') {
-    const badge = document.createElement('span');
-    badge.className   = 'badge';
+  const badge = document.createElement('span');
+  badge.className = 'badge';
+  if (_mode === 'subreddit') {
+    badge.textContent = '…';
+    item._badge = badge;
+  } else if (item.cat !== 'images') {
     badge.textContent = item.cat === 'gifs' ? 'GIF' : (item.rgid ? 'REDGIF' : 'VIDEO');
-    card.appendChild(badge);
+  } else {
+    badge.hidden = true;
   }
+  card.appendChild(badge);
 
   const img = document.createElement('img');
   img.src            = item.preview || '';
@@ -1082,8 +1212,11 @@ document.querySelectorAll('.tab').forEach(btn => {
     document.querySelectorAll('.tab-pane').forEach(g => {
       g.id === 'grid-' + tab ? g.removeAttribute('hidden') : g.setAttribute('hidden', '');
     });
+    updateLoadMore();
   });
 });
+
+$('load-more-btn').addEventListener('click', () => loadMore(getActiveTab()));
 
 /* ── Selection ───────────────────────────────────── */
 
@@ -1425,6 +1558,7 @@ async function startScrape() {
   scrapeBtn.disabled = true;
   $('error-area').setAttribute('hidden', '');
   $('profile-card').setAttribute('hidden', '');
+  $('load-more-row').setAttribute('hidden', '');
   $('empty-notice').setAttribute('hidden', '');
   $('main').removeAttribute('hidden');
   $('grid-images').innerHTML = '';
@@ -1448,6 +1582,8 @@ async function startScrape() {
     }
 
     if (S.rgQueue.length) await resolveRedgifs();
+    updateSubBadges();
+    updateLoadMore();
     setProgress(`Done — ${total()} items found`, '', 1);
     $('select-btn').removeAttribute('hidden');
 
