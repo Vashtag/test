@@ -953,7 +953,8 @@ async function resolveRedgifs() {
           });
           if (!r.ok) return;
           const { gif } = await r.json();
-          item.src     = `https://media.redgifs.com/${gif.id}.mp4`;
+          item.src     = gif.urls?.hd || gif.urls?.sd || `https://media.redgifs.com/${gif.id}.mp4`;
+          item.srcSd   = gif.urls?.sd || `https://media.redgifs.com/${gif.id}-mobile.mp4`;
           item.poster  = gif.poster  || gif.thumbnail || item.poster;
           item.preview = gif.poster  || gif.thumbnail || item.preview;
           if (item._thumb) item._thumb.src = item.preview || '';
@@ -1433,6 +1434,38 @@ async function fetchBlob(url) {
   throw new Error(errors[0] || 'fetch failed');
 }
 
+/* Fetch a Redgifs MP4.
+   The CDN often enforces Referer: redgifs.com — we pass it as the fetch referrer
+   so CORS proxies (which forward incoming headers) relay it to the CDN. */
+async function fetchRgBlob(rgid, srcSd) {
+  const hdUrl = `https://media.redgifs.com/${rgid}.mp4`;
+  const sdUrl = srcSd || `https://media.redgifs.com/${rgid}-mobile.mp4`;
+  const rgOpts = {
+    credentials   : 'omit',
+    referrer      : 'https://www.redgifs.com/',
+    referrerPolicy: 'unsafe-url',
+  };
+
+  for (const u of [hdUrl, sdUrl]) {
+    /* 1 — direct (works in Chrome / when ETP is off) */
+    try { const r = await fetch(u, rgOpts); if (r.ok) return streamBlob(r); } catch {}
+    /* 2 — CORS proxies with spoofed Referer */
+    for (const px of DL_PROXIES.slice(1)) {
+      try { const r = await fetch(px(u), rgOpts); if (r.ok) return streamBlob(r); } catch {}
+    }
+  }
+
+  /* 3 — authenticated request via proxy */
+  try {
+    const tok      = await fetchRgToken();
+    const authOpts = { ...rgOpts, headers: { Authorization: 'Bearer ' + tok } };
+    const r        = await fetch(PROXY(hdUrl), authOpts);
+    if (r.ok) return streamBlob(r);
+  } catch {}
+
+  throw new Error(`fetchRgBlob: all attempts failed for ${rgid}`);
+}
+
 /* ── Download selected ───────────────────────────── */
 
 async function downloadSelected() {
@@ -1446,8 +1479,9 @@ async function downloadSelected() {
      poster/preview image — that would silently download a JPEG instead of a video. */
   function srcFor(item) {
     if (item.cat === 'videos') {
-      if (!item.src) throw new Error('video URL not resolved — skipping');
-      return item.src;
+      const src = item.src || (item.rgid ? `https://media.redgifs.com/${item.rgid}.mp4` : null);
+      if (!src) throw new Error('video URL not resolved — skipping');
+      return src;
     }
     return item.src || item.preview;
   }
@@ -1466,7 +1500,8 @@ async function downloadSelected() {
           });
           if (!r.ok) return;
           const { gif } = await r.json();
-          item.src     = `https://media.redgifs.com/${gif.id}.mp4`;
+          item.src     = gif.urls?.hd || gif.urls?.sd || `https://media.redgifs.com/${gif.id}.mp4`;
+          item.srcSd   = gif.urls?.sd || `https://media.redgifs.com/${gif.id}-mobile.mp4`;
           item.poster  = gif.poster  || gif.thumbnail || item.poster;
           item.preview = gif.poster  || gif.thumbnail || item.preview;
           if (item._thumb) item._thumb.src = item.preview || '';
@@ -1487,9 +1522,14 @@ async function downloadSelected() {
     for (const item of items) {
       setProgress(`Saving ${done + 1} / ${n}…`, '', done / n);
       try {
-        const url  = srcFor(item);
-        let   blob = await fetchBlob(url);
-        if (blob.type.startsWith('image/')) blob = await stripExif(blob);
+        let blob;
+        if (item.rgid) {
+          blob = await fetchRgBlob(item.rgid, item.srcSd);
+        } else {
+          blob = await fetchBlob(srcFor(item));
+        }
+        const url = item.src || item.preview || '';
+        if (item.cat === 'images' && blob.type.startsWith('image/')) blob = await stripExif(blob);
         const ext  = blobExt(blob, url);
         const name = `${String(done + 1).padStart(4, '0')}_${slug(item.title)}.${ext}`;
         const fh   = await dir.getFileHandle(name, { create: true });
@@ -1498,8 +1538,8 @@ async function downloadSelected() {
         await wr.close();
       } catch (e) {
         console.error('[Folder] skipped item:', item.src || item.preview, e);
-        /* Last resort for videos: trigger browser download via anchor */
-        if (item.cat === 'videos' && item.src) anchorDownload(item.src, slug(item.title) + '.mp4');
+        if (item.cat === 'videos' && (item.src || item.rgid))
+          anchorDownload(item.src || `https://www.redgifs.com/watch/${item.rgid}`, slug(item.title) + '.mp4');
         failed++;
       }
       done++;
@@ -1513,15 +1553,21 @@ async function downloadSelected() {
     for (const item of items) {
       setProgress(`Packing ${done + 1} / ${n}…`, '', done / n);
       try {
-        const url  = srcFor(item);
-        let   blob = await fetchBlob(url);
-        if (blob.type.startsWith('image/')) blob = await stripExif(blob);
+        let blob;
+        if (item.rgid) {
+          blob = await fetchRgBlob(item.rgid, item.srcSd);
+        } else {
+          blob = await fetchBlob(srcFor(item));
+        }
+        const url = item.src || item.preview || '';
+        if (item.cat === 'images' && blob.type.startsWith('image/')) blob = await stripExif(blob);
         const ext  = blobExt(blob, url);
         const name = `${String(done + 1).padStart(4, '0')}_${slug(item.title)}.${ext}`;
         zip.file(name, await blob.arrayBuffer());
       } catch (e) {
         console.error('[ZIP] skipped item:', item.src || item.preview, e);
-        if (item.cat === 'videos' && item.src) anchorDownload(item.src, slug(item.title) + '.mp4');
+        if (item.cat === 'videos' && (item.src || item.rgid))
+          anchorDownload(item.src || `https://www.redgifs.com/watch/${item.rgid}`, slug(item.title) + '.mp4');
         failed++;
       }
       done++;
