@@ -355,6 +355,24 @@
     #profile-bio a { color: var(--blue); text-decoration: none; }
     #profile-bio a:hover { text-decoration: underline; }
 
+    #profile-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    #profile-links a {
+      font-size: 0.8rem;
+      color: var(--blue);
+      text-decoration: none;
+      border: 1px solid var(--border);
+      padding: 3px 10px;
+      border-radius: 4px;
+      background: rgba(88,166,255,.06);
+      transition: border-color .15s, background .15s;
+    }
+    #profile-links a:hover { border-color: var(--blue); background: rgba(88,166,255,.14); }
+
     /* ── Empty state ─────────────────────────────── */
     #empty-notice {
       text-align: center;
@@ -503,6 +521,7 @@
     <div class="profile-info">
       <div id="profile-name"></div>
       <div id="profile-bio"></div>
+      <div id="profile-links" hidden></div>
     </div>
   </div>
 </div>
@@ -666,12 +685,16 @@ function htmlEsc(s) {
 }
 
 function linkify(text) {
-  const urlRe = /https?:\/\/[^\s\])"]+/g;
+  /* Match markdown links [text](url) first, then bare URLs */
+  const re = /\[([^\]]*)\]\((https?:\/\/[^)]+)\)|https?:\/\/[^\s\])"]+/g;
   let out = '', last = 0, m;
-  while ((m = urlRe.exec(text)) !== null) {
+  while ((m = re.exec(text)) !== null) {
     out += htmlEsc(text.slice(last, m.index));
-    const safeHref = htmlEsc(m[0].replace(/"/g, '%22'));
-    out += `<a href="${safeHref}" target="_blank" rel="noopener" referrerpolicy="no-referrer">${htmlEsc(m[0])}</a>`;
+    if (m[1] !== undefined) {
+      out += `<a href="${htmlEsc(m[2])}" target="_blank" rel="noopener" referrerpolicy="no-referrer">${htmlEsc(m[1])}</a>`;
+    } else {
+      out += `<a href="${htmlEsc(m[0])}" target="_blank" rel="noopener" referrerpolicy="no-referrer">${htmlEsc(m[0])}</a>`;
+    }
     last = m.index + m[0].length;
   }
   return out + htmlEsc(text.slice(last));
@@ -679,23 +702,56 @@ function linkify(text) {
 
 async function fetchUserProfile(user) {
   try {
-    const res = await apiFetch(`https://www.reddit.com/user/${encodeURIComponent(user)}/about.json?raw_json=1`);
-    if (!res.ok) return;
-    const { data } = await res.json();
+    const aboutUrl  = `https://www.reddit.com/user/${encodeURIComponent(user)}/about.json?raw_json=1`;
+    const widgetUrl = `https://www.reddit.com/r/u_${encodeURIComponent(user.toLowerCase())}/api/widgets.json?raw_json=1`;
+
+    const [aboutRes, widgetRes] = await Promise.allSettled([
+      apiFetch(aboutUrl),
+      apiFetch(widgetUrl),
+    ]);
+
+    if (aboutRes.status !== 'fulfilled' || !aboutRes.value.ok) return;
+    const { data } = await aboutRes.value.json();
+
+    /* Extract social/button links from profile widgets */
+    const socialLinks = [];
+    if (widgetRes.status === 'fulfilled' && widgetRes.value.ok) {
+      try {
+        const wdata = (await widgetRes.value.json())?.data;
+        for (const widget of Object.values(wdata?.items || {})) {
+          if (widget.kind === 'button') {
+            for (const btn of (widget.buttons || [])) {
+              if (btn.url?.startsWith('http'))
+                socialLinks.push({ text: btn.text || btn.url, url: btn.url });
+            }
+          }
+        }
+      } catch {}
+    }
 
     const avatarUrl = (data.icon_img || data.snoovatar_img || '').replace(/\?.*$/, '');
     const bio       = (data.subreddit?.public_description || '').trim();
     const name      = data.name || user;
 
-    $('profile-avatar').src = avatarUrl || '';
+    $('profile-avatar').src    = avatarUrl || '';
     $('profile-avatar').hidden = !avatarUrl;
 
     $('profile-name').innerHTML =
       `<a href="https://www.reddit.com/user/${htmlEsc(name)}" target="_blank" rel="noopener" referrerpolicy="no-referrer">u/${htmlEsc(name)}</a>`;
 
     const bioEl = $('profile-bio');
-    bioEl.innerHTML  = bio ? linkify(bio) : '';
-    bioEl.hidden     = !bio;
+    bioEl.innerHTML = bio ? linkify(bio) : '';
+    bioEl.hidden    = !bio;
+
+    const linksEl = $('profile-links');
+    if (socialLinks.length) {
+      linksEl.innerHTML = socialLinks.map(l =>
+        `<a href="${htmlEsc(l.url)}" target="_blank" rel="noopener" referrerpolicy="no-referrer">${htmlEsc(l.text)}</a>`
+      ).join('');
+      linksEl.hidden = false;
+    } else {
+      linksEl.hidden = true;
+    }
 
     $('profile-card').removeAttribute('hidden');
   } catch { /* profile is optional — silently skip on error */ }
