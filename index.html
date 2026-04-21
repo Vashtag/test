@@ -1477,39 +1477,52 @@ async function fetchBlob(url) {
 }
 
 /* Fetch a Redgifs MP4.
-   The CDN redirects requests with no/wrong Referer to the poster JPEG — we
-   (a) spoof Referer via the fetch referrer option so proxies forward it, and
-   (b) validate Content-Type so a JPEG redirect is never silently accepted. */
+   Two-stage validation: fast content-type pre-check (before reading the body),
+   then a minimum-size check on the resulting blob to rule out error stubs.
+   Tries SD (smaller) before HD so proxy size limits are less likely to bite. */
 async function fetchRgBlob(rgid, srcSd) {
   const hdUrl = `https://media.redgifs.com/${rgid}.mp4`;
   const sdUrl = srcSd || `https://media.redgifs.com/${rgid}-mobile.mp4`;
-  const rgOpts = {
-    credentials   : 'omit',
-    referrer      : 'https://www.redgifs.com/',
-    referrerPolicy: 'unsafe-url',
-  };
+  const rgOpts = { credentials: 'omit', referrer: 'https://www.redgifs.com/', referrerPolicy: 'unsafe-url' };
 
-  /* Accept only genuine video responses; reject image/* (CDN poster redirect) */
-  const isVid = r => {
+  /* Pre-check content-type without reading the body; returns null to skip */
+  const ctOk = r => {
     const ct = (r.headers.get('content-type') || '').toLowerCase();
-    return !ct || ct.startsWith('video/') || ct === 'application/octet-stream';
+    /* Reject known-bad types immediately; accept video/*, octet-stream, or unknown */
+    return !ct.startsWith('image/') && !ct.startsWith('text/') && ct !== 'application/json';
   };
 
-  for (const u of [hdUrl, sdUrl]) {
-    /* 1 — direct (works in Chrome / when ETP is off) */
-    try { const r = await fetch(u, rgOpts); if (r.ok && isVid(r)) return streamBlob(r); } catch {}
+  /* Read body and confirm it's actually large enough to be a video (≥ 50 KB) */
+  const readVideo = async r => {
+    const blob = await streamBlob(r);
+    return blob.size >= 50_000 ? blob : null;
+  };
+
+  /* Try SD first (smaller file, proxy-friendlier), then HD */
+  for (const u of [sdUrl, hdUrl]) {
+    /* 1 — direct */
+    try {
+      const r = await fetch(u, rgOpts);
+      if (r.ok && ctOk(r)) { const b = await readVideo(r); if (b) return b; }
+    } catch {}
+
     /* 2 — CORS proxies with spoofed Referer */
     for (const px of DL_PROXIES.slice(1)) {
-      try { const r = await fetch(px(u), rgOpts); if (r.ok && isVid(r)) return streamBlob(r); } catch {}
+      try {
+        const r = await fetch(px(u), rgOpts);
+        if (r.ok && ctOk(r)) { const b = await readVideo(r); if (b) return b; }
+      } catch {}
     }
   }
 
-  /* 3 — authenticated request via proxy */
+  /* 3 — auth token via proxy (last resort) */
   try {
     const tok      = await fetchRgToken();
     const authOpts = { ...rgOpts, headers: { Authorization: 'Bearer ' + tok } };
-    const r        = await fetch(PROXY(hdUrl), authOpts);
-    if (r.ok && isVid(r)) return streamBlob(r);
+    for (const u of [sdUrl, hdUrl]) {
+      const r = await fetch(PROXY(u), authOpts);
+      if (r.ok && ctOk(r)) { const b = await readVideo(r); if (b) return b; }
+    }
   } catch {}
 
   throw new Error(`fetchRgBlob: all attempts failed for ${rgid}`);
@@ -1587,14 +1600,12 @@ async function downloadSelected() {
         await wr.write(blob);
         await wr.close();
       } catch (e) {
-        console.error('[Folder] skipped item:', item.src || item.preview, e);
-        if (item.cat === 'videos' && (item.src || item.rgid))
-          anchorDownload(item.src || `https://www.redgifs.com/watch/${item.rgid}`, `${String(done + 1).padStart(4, '0')}.mp4`);
+        console.error('[Folder] skipped:', item.src || item.preview, e.message);
         failed++;
       }
       done++;
     }
-    setProgress(`Saved ${done - failed} / ${n} files`, failed ? ` (${failed} opened as tab)` : '', 1);
+    setProgress(`Saved ${done - failed} / ${n} files`, failed ? `${failed} failed (CDN blocked)` : '', 1);
 
   } else {
     /* ── ZIP fallback (Firefox / Safari) ── */
@@ -1616,9 +1627,7 @@ async function downloadSelected() {
         const name = `${String(done + 1).padStart(4, '0')}.${ext}`;
         zip.file(name, await blob.arrayBuffer());
       } catch (e) {
-        console.error('[ZIP] skipped item:', item.src || item.preview, e);
-        if (item.cat === 'videos' && (item.src || item.rgid))
-          anchorDownload(item.src || `https://www.redgifs.com/watch/${item.rgid}`, `${String(done + 1).padStart(4, '0')}.mp4`);
+        console.error('[ZIP] skipped:', item.src || item.preview, e.message);
         failed++;
       }
       done++;
@@ -1634,7 +1643,7 @@ async function downloadSelected() {
     });
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 3000);
-    setProgress(`Done — ${done - failed} files in ZIP`, '', 1);
+    setProgress(`Done — ${done - failed} files in ZIP`, failed ? `${failed} failed (CDN blocked)` : '', 1);
   }
 
   $('dl-btn').disabled = S.selected.size === 0;
