@@ -263,24 +263,25 @@
       pointer-events: none;
     }
 
-    .card .author-tag {
+    .author-badge {
       position: absolute;
-      top: 5px;
-      left: 5px;
-      z-index: 10;
-      background: rgba(0,0,0,.72);
+      top: 6px;
+      left: 6px;
+      background: rgba(0,0,0,.78);
       border-radius: 4px;
       color: #fff;
-      font-size: 0.62rem;
-      font-weight: 600;
-      max-width: calc(100% - 14px);
+      cursor: pointer;
+      font-size: 0.58rem;
+      font-weight: 700;
+      letter-spacing: .5px;
+      max-width: calc(100% - 16px);
       overflow: hidden;
-      padding: 2px 6px;
-      text-decoration: none;
+      padding: 2px 5px;
       text-overflow: ellipsis;
       white-space: nowrap;
+      z-index: 4;
     }
-    .card .author-tag:hover { color: var(--blue); text-decoration: underline; }
+    .author-badge:hover { background: rgba(88,166,255,.8); }
 
     /* ── Select mode ────────────────────────────────*/
     .card .chk {
@@ -1140,16 +1141,16 @@ function buildCard(item) {
   item._thumb = img;
   card.appendChild(img);
 
-  /* Author tag — appended after <img> so it paints on top in all browsers */
+  /* Username badge — same style as the count badge, top-left */
   if (_mode === 'subreddit' && item.author) {
-    const a = document.createElement('a');
-    a.className = 'author-tag';
-    a.href      = `${location.href.replace(/\?.*$/, '')}?u=${encodeURIComponent(item.author)}`;
-    a.target    = '_blank';
-    a.rel       = 'noopener noreferrer';
-    a.textContent = `u/${item.author}`;
-    a.addEventListener('click', e => e.stopPropagation());
-    card.appendChild(a);
+    const ab = document.createElement('span');
+    ab.className  = 'author-badge';
+    ab.textContent = `u/${item.author}`;
+    ab.addEventListener('click', e => {
+      e.stopPropagation();
+      window.open(`${location.href.replace(/\?.*$/, '')}?u=${encodeURIComponent(item.author)}`, '_blank', 'noopener noreferrer');
+    });
+    card.appendChild(ab);
   }
 
   const cap = document.createElement('div');
