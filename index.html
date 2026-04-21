@@ -1625,9 +1625,12 @@ async function downloadSelected() {
     }
     setProgress('Building ZIP…', '', 0.99);
     const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+    const hasVid = items.some(i => i.cat === 'videos');
+    const hasPic = items.some(i => i.cat === 'images' || i.cat === 'gifs');
+    const suffix = hasVid && !hasPic ? 'videos' : hasPic && !hasVid ? 'pictures' : 'media';
     const a = Object.assign(document.createElement('a'), {
       href     : URL.createObjectURL(zipBlob),
-      download : `media-${Date.now()}.zip`,
+      download : `${S.user}-${suffix}.zip`,
     });
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 3000);
