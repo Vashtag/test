@@ -1133,7 +1133,8 @@ function buildCard(item) {
   card.appendChild(badge);
 
   const img = document.createElement('img');
-  img.src            = item.preview || '';
+  /* GIFs: show the animated source directly; everything else uses the static preview */
+  img.src            = (item.cat === 'gifs' && item.src) ? item.src : (item.preview || '');
   img.alt            = item.title;
   img.loading        = 'lazy';
   img.referrerPolicy = 'no-referrer';
