@@ -857,15 +857,15 @@ function extractPost(d) {
         const still  = dec(meta.s.u   || '');
         const prev   = pickRes(meta.p) || still;
         if (gifSrc)
-          out.push({ cat:'gifs',   src:gifSrc, preview:prev||gifSrc, poster:null, postUrl, title });
+          out.push({ cat:'gifs',   src:gifSrc, preview:prev||gifSrc, poster:null, postUrl, title, author });
         else if (mp4Src)
-          out.push({ cat:'videos', src:mp4Src, preview:prev||still,  poster:still, postUrl, title });
+          out.push({ cat:'videos', src:mp4Src, preview:prev||still,  poster:still, postUrl, title, author });
         continue;
       }
 
       const src  = dec(meta.s.u || meta.s.url || '');
       const prev = pickRes(meta.p) || src;
-      if (src) out.push({ cat:'images', src, preview:prev, poster:null, postUrl, title });
+      if (src) out.push({ cat:'images', src, preview:prev, poster:null, postUrl, title, author });
     }
     return out;
   }
@@ -875,7 +875,7 @@ function extractPost(d) {
   if (rgid) {
     const poster = dec(d.preview?.images?.[0]?.source?.url || '');
     const prev   = pickRes(d.preview?.images?.[0]?.resolutions) || poster;
-    out.push({ cat:'videos', src:null, preview:prev, poster, rgid, postUrl, title });
+    out.push({ cat:'videos', src:null, preview:prev, poster, rgid, postUrl, title, author });
     return out;
   }
 
@@ -884,7 +884,7 @@ function extractPost(d) {
     const rv     = d.media.reddit_video;
     const poster = dec(d.preview?.images?.[0]?.source?.url || '');
     const prev   = pickRes(d.preview?.images?.[0]?.resolutions) || poster;
-    out.push({ cat:'videos', src:dec(rv.fallback_url||''), preview:prev, poster, postUrl, title });
+    out.push({ cat:'videos', src:dec(rv.fallback_url||''), preview:prev, poster, postUrl, title, author });
     return out;
   }
 
@@ -892,7 +892,7 @@ function extractPost(d) {
   if (isGif(d.url)) {
     const src  = dec(d.url);
     const prev = pickRes(d.preview?.images?.[0]?.resolutions) || src;
-    out.push({ cat:'gifs', src, preview:prev, poster:null, postUrl, title });
+    out.push({ cat:'gifs', src, preview:prev, poster:null, postUrl, title, author });
     return out;
   }
 
@@ -900,11 +900,10 @@ function extractPost(d) {
   if (d.post_hint === 'image' || isImg(d.url)) {
     const src  = dec(d.preview?.images?.[0]?.source?.url || '') || dec(d.url);
     const prev = pickRes(d.preview?.images?.[0]?.resolutions) || src;
-    if (src) out.push({ cat:'images', src, preview:prev, poster:null, postUrl, title });
+    if (src) out.push({ cat:'images', src, preview:prev, poster:null, postUrl, title, author });
     return out;
   }
 
-  for (const item of out) item.author = author;
   return out;
 }
 
