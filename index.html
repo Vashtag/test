@@ -1435,8 +1435,9 @@ async function fetchBlob(url) {
 }
 
 /* Fetch a Redgifs MP4.
-   The CDN often enforces Referer: redgifs.com — we pass it as the fetch referrer
-   so CORS proxies (which forward incoming headers) relay it to the CDN. */
+   The CDN redirects requests with no/wrong Referer to the poster JPEG — we
+   (a) spoof Referer via the fetch referrer option so proxies forward it, and
+   (b) validate Content-Type so a JPEG redirect is never silently accepted. */
 async function fetchRgBlob(rgid, srcSd) {
   const hdUrl = `https://media.redgifs.com/${rgid}.mp4`;
   const sdUrl = srcSd || `https://media.redgifs.com/${rgid}-mobile.mp4`;
@@ -1446,12 +1447,18 @@ async function fetchRgBlob(rgid, srcSd) {
     referrerPolicy: 'unsafe-url',
   };
 
+  /* Accept only genuine video responses; reject image/* (CDN poster redirect) */
+  const isVid = r => {
+    const ct = (r.headers.get('content-type') || '').toLowerCase();
+    return !ct || ct.startsWith('video/') || ct === 'application/octet-stream';
+  };
+
   for (const u of [hdUrl, sdUrl]) {
     /* 1 — direct (works in Chrome / when ETP is off) */
-    try { const r = await fetch(u, rgOpts); if (r.ok) return streamBlob(r); } catch {}
+    try { const r = await fetch(u, rgOpts); if (r.ok && isVid(r)) return streamBlob(r); } catch {}
     /* 2 — CORS proxies with spoofed Referer */
     for (const px of DL_PROXIES.slice(1)) {
-      try { const r = await fetch(px(u), rgOpts); if (r.ok) return streamBlob(r); } catch {}
+      try { const r = await fetch(px(u), rgOpts); if (r.ok && isVid(r)) return streamBlob(r); } catch {}
     }
   }
 
@@ -1460,7 +1467,7 @@ async function fetchRgBlob(rgid, srcSd) {
     const tok      = await fetchRgToken();
     const authOpts = { ...rgOpts, headers: { Authorization: 'Bearer ' + tok } };
     const r        = await fetch(PROXY(hdUrl), authOpts);
-    if (r.ok) return streamBlob(r);
+    if (r.ok && isVid(r)) return streamBlob(r);
   } catch {}
 
   throw new Error(`fetchRgBlob: all attempts failed for ${rgid}`);
@@ -1530,7 +1537,8 @@ async function downloadSelected() {
         }
         const url = item.src || item.preview || '';
         if (item.cat === 'images' && blob.type.startsWith('image/')) blob = await stripExif(blob);
-        const ext  = blobExt(blob, url);
+        /* Videos must always save as .mp4 — never let a mistyped blob become .jpg */
+        const ext  = item.cat === 'videos' ? 'mp4' : blobExt(blob, url);
         const name = `${String(done + 1).padStart(4, '0')}_${slug(item.title)}.${ext}`;
         const fh   = await dir.getFileHandle(name, { create: true });
         const wr   = await fh.createWritable();
@@ -1561,7 +1569,8 @@ async function downloadSelected() {
         }
         const url = item.src || item.preview || '';
         if (item.cat === 'images' && blob.type.startsWith('image/')) blob = await stripExif(blob);
-        const ext  = blobExt(blob, url);
+        /* Videos must always save as .mp4 — never let a mistyped blob become .jpg */
+        const ext  = item.cat === 'videos' ? 'mp4' : blobExt(blob, url);
         const name = `${String(done + 1).padStart(4, '0')}_${slug(item.title)}.${ext}`;
         zip.file(name, await blob.arrayBuffer());
       } catch (e) {
