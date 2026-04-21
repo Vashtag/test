@@ -562,6 +562,12 @@
         <button id="mode-user" class="mode-btn active">u/</button>
         <button id="mode-sub"  class="mode-btn">r/</button>
       </div>
+      <div id="sort-row" class="mode-toggle" hidden>
+        <button class="sort-btn mode-btn active" data-sort="hot">Hot</button>
+        <button class="sort-btn mode-btn" data-sort="top">Top</button>
+        <button class="sort-btn mode-btn" data-sort="new">New</button>
+        <button class="sort-btn mode-btn" data-sort="rising">Rising</button>
+      </div>
       <input type="text" id="username" placeholder="Reddit username (e.g. spez)" autocomplete="off" spellcheck="false" />
       <button id="scrape-btn">Scrape</button>
       <button id="select-btn" hidden>Select</button>
@@ -681,6 +687,7 @@ let S = mkState();
 let _rgToken = null, _rgTokenTs = 0;
 let _useProxy = false;
 let _mode = 'user'; /* 'user' | 'subreddit' */
+let _sort = 'hot';  /* subreddit sort: hot | top | new | rising */
 
 /* ── Fetch with CORS-proxy fallback ──────────────── */
 const PROXY = u => 'https://corsproxy.io/?' + encodeURIComponent(u);
@@ -913,14 +920,15 @@ async function fetchAllPosts() {
   let after = '', page = 0;
   const isSub  = _mode === 'subreddit';
   const baseUrl = isSub
-    ? `https://www.reddit.com/r/${encodeURIComponent(S.user)}/hot.json`
+    ? `https://www.reddit.com/r/${encodeURIComponent(S.user)}/${_sort}.json`
     : `https://www.reddit.com/user/${encodeURIComponent(S.user)}/submitted.json`;
 
   while (page < CFG.maxPages) {
     page++;
     setProgress('Collecting posts…', `Page ${page} · ${total()} items`, null);
 
-    const qs  = `limit=${CFG.pageLimit}&raw_json=1${after ? '&after=' + after : ''}`;
+    const timeParam = (isSub && _sort === 'top') ? '&t=all' : '';
+    const qs  = `limit=${CFG.pageLimit}&raw_json=1${after ? '&after=' + after : ''}${timeParam}`;
     const url = `${baseUrl}?${qs}`;
     const res = await apiFetch(url);
 
@@ -1573,7 +1581,7 @@ async function downloadSelected() {
         if (item.cat === 'images' && blob.type.startsWith('image/')) blob = await stripExif(blob);
         /* Videos must always save as .mp4 — never let a mistyped blob become .jpg */
         const ext  = item.cat === 'videos' ? 'mp4' : blobExt(blob, url);
-        const name = `${String(done + 1).padStart(4, '0')}_${slug(item.title)}.${ext}`;
+        const name = `${String(done + 1).padStart(4, '0')}.${ext}`;
         const fh   = await dir.getFileHandle(name, { create: true });
         const wr   = await fh.createWritable();
         await wr.write(blob);
@@ -1581,7 +1589,7 @@ async function downloadSelected() {
       } catch (e) {
         console.error('[Folder] skipped item:', item.src || item.preview, e);
         if (item.cat === 'videos' && (item.src || item.rgid))
-          anchorDownload(item.src || `https://www.redgifs.com/watch/${item.rgid}`, slug(item.title) + '.mp4');
+          anchorDownload(item.src || `https://www.redgifs.com/watch/${item.rgid}`, `${String(done + 1).padStart(4, '0')}.mp4`);
         failed++;
       }
       done++;
@@ -1605,12 +1613,12 @@ async function downloadSelected() {
         if (item.cat === 'images' && blob.type.startsWith('image/')) blob = await stripExif(blob);
         /* Videos must always save as .mp4 — never let a mistyped blob become .jpg */
         const ext  = item.cat === 'videos' ? 'mp4' : blobExt(blob, url);
-        const name = `${String(done + 1).padStart(4, '0')}_${slug(item.title)}.${ext}`;
+        const name = `${String(done + 1).padStart(4, '0')}.${ext}`;
         zip.file(name, await blob.arrayBuffer());
       } catch (e) {
         console.error('[ZIP] skipped item:', item.src || item.preview, e);
         if (item.cat === 'videos' && (item.src || item.rgid))
-          anchorDownload(item.src || `https://www.redgifs.com/watch/${item.rgid}`, slug(item.title) + '.mp4');
+          anchorDownload(item.src || `https://www.redgifs.com/watch/${item.rgid}`, `${String(done + 1).padStart(4, '0')}.mp4`);
         failed++;
       }
       done++;
@@ -1619,7 +1627,7 @@ async function downloadSelected() {
     const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
     const a = Object.assign(document.createElement('a'), {
       href     : URL.createObjectURL(zipBlob),
-      download : `reddit-${S.user}-${Date.now()}.zip`,
+      download : `media-${Date.now()}.zip`,
     });
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 3000);
@@ -1657,13 +1665,23 @@ $('mode-user').addEventListener('click', () => {
   _mode = 'user';
   $('mode-user').classList.add('active');
   $('mode-sub').classList.remove('active');
+  $('sort-row').setAttribute('hidden', '');
   usernameEl.placeholder = 'Reddit username (e.g. spez)';
 });
 $('mode-sub').addEventListener('click', () => {
   _mode = 'subreddit';
   $('mode-sub').classList.add('active');
   $('mode-user').classList.remove('active');
+  $('sort-row').removeAttribute('hidden');
   usernameEl.placeholder = 'Subreddit name (e.g. pics)';
+});
+
+/* ── Sort toggle (subreddit mode only) ───────────── */
+document.querySelectorAll('.sort-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    _sort = btn.dataset.sort;
+    document.querySelectorAll('.sort-btn').forEach(b => b.classList.toggle('active', b === btn));
+  });
 });
 
 /* ── Entry point ─────────────────────────────────── */
