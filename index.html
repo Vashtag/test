@@ -263,6 +263,32 @@
       pointer-events: none;
     }
 
+    .card .author-tag {
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      background: rgba(0,0,0,.72);
+      border-radius: 4px;
+      font-size: 0.62rem;
+      font-weight: 600;
+      max-width: calc(100% - 48px);
+      overflow: hidden;
+      padding: 2px 6px;
+      pointer-events: none;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      z-index: 2;
+    }
+    .card .author-tag a {
+      color: #fff;
+      display: block;
+      overflow: hidden;
+      pointer-events: all;
+      text-decoration: none;
+      text-overflow: ellipsis;
+    }
+    .card .author-tag a:hover { color: var(--blue); text-decoration: underline; }
+
     /* ── Select mode ────────────────────────────────*/
     .card .chk {
       position: absolute;
@@ -822,6 +848,7 @@ function extractPost(d) {
   if (d.is_self) return [];
   const postUrl = 'https://reddit.com' + d.permalink;
   const title   = d.title || '';
+  const author  = d.author || '';
   const out     = [];
 
   /* Gallery */
@@ -883,6 +910,7 @@ function extractPost(d) {
     return out;
   }
 
+  for (const item of out) item.author = author;
   return out;
 }
 
@@ -1109,6 +1137,19 @@ function buildCard(item) {
     badge.hidden = true;
   }
   card.appendChild(badge);
+
+  if (_mode === 'subreddit' && item.author) {
+    const authorTag = document.createElement('div');
+    authorTag.className = 'author-tag';
+    const a = document.createElement('a');
+    a.href    = `${location.href.replace(/\?.*$/, '')}?u=${encodeURIComponent(item.author)}`;
+    a.target  = '_blank';
+    a.rel     = 'noopener noreferrer';
+    a.textContent = `u/${item.author}`;
+    a.addEventListener('click', e => e.stopPropagation());
+    authorTag.appendChild(a);
+    card.appendChild(authorTag);
+  }
 
   const img = document.createElement('img');
   img.src            = item.preview || '';
@@ -1690,6 +1731,19 @@ async function startScrape() {
     scrapeBtn.disabled = false;
   }
 }
+
+/* ── Auto-start from ?u=username URL parameter ───────── */
+(function () {
+  const u = new URLSearchParams(location.search).get('u');
+  if (!u) return;
+  /* Switch to user mode */
+  _mode = 'user';
+  $('mode-user').classList.add('active');
+  $('mode-sub').classList.remove('active');
+  usernameEl.placeholder = 'Reddit username (e.g. spez)';
+  usernameEl.value = u;
+  startScrape();
+}());
 </script>
 </body>
 </html>
