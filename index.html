@@ -559,8 +559,13 @@
     <h1>Reddit Media Scraper</h1>
     <div class="search-row">
       <div class="mode-toggle">
-        <button id="mode-user" class="mode-btn active">u/</button>
-        <button id="mode-sub"  class="mode-btn">r/</button>
+        <button id="mode-user"   class="mode-btn active">u/</button>
+        <button id="mode-sub"    class="mode-btn">r/</button>
+        <button id="mode-coomer" class="mode-btn">Coomer</button>
+      </div>
+      <div id="service-row" class="mode-toggle" hidden>
+        <button class="svc-btn mode-btn active" data-svc="onlyfans">OnlyFans</button>
+        <button class="svc-btn mode-btn" data-svc="fansly">Fansly</button>
       </div>
       <div id="sort-row" class="mode-toggle" hidden>
         <button class="sort-btn mode-btn active" data-sort="hot">Hot</button>
@@ -686,8 +691,9 @@ let S = mkState();
 
 let _rgToken = null, _rgTokenTs = 0;
 let _useProxy = false;
-let _mode = 'user'; /* 'user' | 'subreddit' */
+let _mode = 'user'; /* 'user' | 'subreddit' | 'coomer' */
 let _sort = 'hot';  /* subreddit sort: hot | top | new | rising */
+let _coomerService = 'onlyfans'; /* 'onlyfans' | 'fansly' */
 
 /* ── Fetch with CORS-proxy fallback ──────────────── */
 const PROXY = u => 'https://corsproxy.io/?' + encodeURIComponent(u);
@@ -1528,6 +1534,61 @@ async function fetchRgBlob(rgid, srcSd) {
   throw new Error(`fetchRgBlob: all attempts failed for ${rgid}`);
 }
 
+/* ── Coomer API ──────────────────────────────────── */
+
+async function fetchCoomerPosts() {
+  let offset = 0;
+  const base = `https://coomer.su/api/v1/${_coomerService}/user/${encodeURIComponent(S.user)}`;
+
+  for (let page = 0; page < CFG.maxPages; page++) {
+    setProgress('Collecting posts…', `${total()} items`, null);
+    const res = await apiFetch(`${base}?o=${offset}`);
+
+    if (res.status === 404) throw new Error(`Coomer user "${S.user}" not found on ${_coomerService}.`);
+    if (!res.ok) throw new Error(`Coomer API error (HTTP ${res.status}).`);
+
+    const posts = await res.json();
+    if (!posts.length) break;
+
+    const batch = { images: [], gifs: [], videos: [] };
+    for (const post of posts) {
+      const postUrl = `https://coomer.su/${_coomerService}/user/${encodeURIComponent(S.user)}/post/${post.id}`;
+      const title   = post.title || '';
+      const author  = post.user  || S.user;
+      const files   = [
+        ...(post.file?.path ? [post.file] : []),
+        ...(post.attachments || []),
+      ];
+
+      for (const f of files) {
+        if (!f.path) continue;
+        const src     = `https://coomer.su${f.path}`;
+        const preview = `https://img.coomer.su/thumbnail${f.path}`;
+        const fname   = (f.name || f.path).toLowerCase();
+
+        let cat;
+        if (/\.(mp4|webm|mov|m4v)$/.test(fname))             cat = 'videos';
+        else if (/\.gif$/.test(fname))                         cat = 'gifs';
+        else if (/\.(jpe?g|png|webp|bmp|avif)$/.test(fname)) cat = 'images';
+        else continue;
+
+        const item = { cat, src, preview,
+          poster: cat === 'videos' ? preview : null,
+          postUrl, title, author };
+        S.items[cat].push(item);
+        batch[cat].push(item);
+      }
+    }
+
+    appendToGrids(batch);
+    updateCounts();
+
+    offset += 50;
+    if (posts.length < 50) break;
+    await sleep(CFG.apiDelay);
+  }
+}
+
 /* ── Download selected ───────────────────────────── */
 
 async function downloadSelected() {
@@ -1677,15 +1738,28 @@ $('mode-user').addEventListener('click', () => {
   _mode = 'user';
   $('mode-user').classList.add('active');
   $('mode-sub').classList.remove('active');
+  $('mode-coomer').classList.remove('active');
   $('sort-row').setAttribute('hidden', '');
+  $('service-row').setAttribute('hidden', '');
   usernameEl.placeholder = 'Reddit username (e.g. spez)';
 });
 $('mode-sub').addEventListener('click', () => {
   _mode = 'subreddit';
   $('mode-sub').classList.add('active');
   $('mode-user').classList.remove('active');
+  $('mode-coomer').classList.remove('active');
   $('sort-row').removeAttribute('hidden');
+  $('service-row').setAttribute('hidden', '');
   usernameEl.placeholder = 'Subreddit name (e.g. pics)';
+});
+$('mode-coomer').addEventListener('click', () => {
+  _mode = 'coomer';
+  $('mode-coomer').classList.add('active');
+  $('mode-user').classList.remove('active');
+  $('mode-sub').classList.remove('active');
+  $('sort-row').setAttribute('hidden', '');
+  $('service-row').removeAttribute('hidden');
+  usernameEl.placeholder = 'Coomer user ID (e.g. modelname)';
 });
 
 /* ── Sort toggle (subreddit mode only) ───────────── */
@@ -1693,6 +1767,14 @@ document.querySelectorAll('.sort-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     _sort = btn.dataset.sort;
     document.querySelectorAll('.sort-btn').forEach(b => b.classList.toggle('active', b === btn));
+  });
+});
+
+/* ── Service toggle (coomer mode only) ───────────── */
+document.querySelectorAll('.svc-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    _coomerService = btn.dataset.svc;
+    document.querySelectorAll('.svc-btn').forEach(b => b.classList.toggle('active', b === btn));
   });
 });
 
@@ -1732,7 +1814,11 @@ async function startScrape() {
 
   try {
     if (_mode === 'user') fetchUserProfile(S.user); /* fire-and-forget */
-    await fetchAllPosts();
+    if (_mode === 'coomer') {
+      await fetchCoomerPosts();
+    } else {
+      await fetchAllPosts();
+    }
 
     if (total() === 0) {
       $('empty-notice').removeAttribute('hidden');
