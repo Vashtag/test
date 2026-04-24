@@ -1536,7 +1536,7 @@ async function fetchCoomerPosts() {
 
   for (const service of SERVICES) {
     let offset = 0;
-    const base = `https://coomer.su/api/v1/${service}/user/${encodeURIComponent(S.user)}`;
+    const base = `https://coomer.st/api/v1/${service}/user/${encodeURIComponent(S.user)}`;
 
     for (let page = 0; page < CFG.maxPages; page++) {
       setProgress('Collecting posts…', `${total()} items`, null);
@@ -1552,7 +1552,7 @@ async function fetchCoomerPosts() {
 
       const batch = { images: [], gifs: [], videos: [] };
       for (const post of posts) {
-        const postUrl = `https://coomer.su/${service}/user/${encodeURIComponent(S.user)}/post/${post.id}`;
+        const postUrl = `https://coomer.st/${service}/user/${encodeURIComponent(S.user)}/post/${post.id}`;
         const title   = post.title || '';
         const author  = post.user  || S.user;
         const files   = [
@@ -1562,8 +1562,8 @@ async function fetchCoomerPosts() {
 
         for (const f of files) {
           if (!f.path) continue;
-          const src     = `https://coomer.su${f.path}`;
-          const preview = `https://img.coomer.su/thumbnail${f.path}`;
+          const src     = `https://coomer.st${f.path}`;
+          const preview = `https://img.coomer.st/thumbnail${f.path}`;
           const fname   = (f.name || f.path).toLowerCase();
 
           let cat;
