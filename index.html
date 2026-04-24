@@ -1558,10 +1558,15 @@ async function fetchCoomerPosts() {
   for (let page = 0; page < CFG.maxPages; page++) {
     setProgress('Collecting posts…', `${total()} items`, null);
     const res = await coomerFetch(`${base}?o=${offset}`);
-    if (!res) break;
+    if (!res) { console.log('[coomer] all proxies failed'); break; }
 
     let posts;
-    try { posts = await res.json(); } catch { break; }
+    try {
+      const txt = await res.text();
+      console.log('[coomer] raw:', txt.slice(0, 400));
+      posts = JSON.parse(txt);
+    } catch { break; }
+    console.log('[coomer] parsed:', Array.isArray(posts) ? posts.length + ' posts' : typeof posts);
     if (!Array.isArray(posts) || !posts.length) break;
 
     const batch = { images: [], gifs: [], videos: [] };
