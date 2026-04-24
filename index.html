@@ -542,6 +542,67 @@
       flex-shrink: 0;
     }
 
+    /* ── Find-subs button ───────────────────────── */
+    #find-sub-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 0.85rem;
+      padding: 7px 14px;
+      flex-shrink: 0;
+    }
+    #find-sub-btn:hover:not(:disabled) { background: var(--bg); border-color: var(--muted); }
+    #find-sub-btn.active { border-color: var(--blue); color: var(--blue); }
+
+    /* ── Subreddit finder panel ──────────────────── */
+    #sub-finder {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 24px;
+      max-height: 420px;
+      overflow-y: auto;
+    }
+    .sub-finder-inner { max-width: 1400px; margin: 0 auto; }
+    #sub-search {
+      width: 100%;
+      max-width: 480px;
+      margin-bottom: 14px;
+    }
+    #sub-results { display: flex; flex-direction: column; gap: 8px; }
+    .sub-result {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      cursor: pointer;
+      background: var(--bg);
+      transition: border-color .15s;
+    }
+    .sub-result:hover { border-color: var(--accent); }
+    .sub-result-left { min-width: 0; }
+    .sub-result-name { font-weight: 700; font-size: 0.9rem; }
+    .sub-result-meta { font-size: 0.75rem; color: var(--muted); margin-top: 1px; }
+    .sub-result-desc {
+      flex: 1;
+      font-size: 0.8rem;
+      color: var(--muted);
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .nsfw-pill {
+      font-size: 0.65rem;
+      font-weight: 700;
+      background: var(--accent);
+      color: #fff;
+      padding: 2px 6px;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+
     /* ── Responsive ──────────────────────────────── */
     @media (max-width: 600px) {
       .flat-grid { columns: 2 120px; }
@@ -557,6 +618,7 @@
 <header>
   <div class="hdr">
     <h1>Reddit Media Scraper</h1>
+    <button id="find-sub-btn">Find Subreddits</button>
     <div class="search-row">
       <div class="mode-toggle">
         <button id="mode-user" class="mode-btn active">u/</button>
@@ -574,6 +636,14 @@
     </div>
   </div>
 </header>
+
+<!-- ── Subreddit finder panel ─────────────────────── -->
+<div id="sub-finder" hidden>
+  <div class="sub-finder-inner">
+    <input type="text" id="sub-search" placeholder="Search subreddits by topic…" autocomplete="off" spellcheck="false" />
+    <div id="sub-results"></div>
+  </div>
+</div>
 
 <!-- ── Profile card ───────────────────────────────── -->
 <div id="profile-card" hidden>
@@ -1148,6 +1218,27 @@ function buildCard(item) {
   img.addEventListener('error', () => { card.style.display = 'none'; });
   item._thumb = img;
   card.appendChild(img);
+
+  /* Video hover — play inline on mouseenter, remove on leave */
+  if (item.cat === 'videos') {
+    let hoverVid = null;
+    card.addEventListener('mouseenter', () => {
+      if (!item.src || S.selecting) return;
+      hoverVid = document.createElement('video');
+      hoverVid.src             = item.src;
+      hoverVid.muted           = true;
+      hoverVid.autoplay        = true;
+      hoverVid.loop            = true;
+      hoverVid.playsInline     = true;
+      hoverVid.referrerPolicy  = 'no-referrer';
+      hoverVid.style.cssText   = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:2;pointer-events:none;border-radius:inherit;';
+      card.appendChild(hoverVid);
+      hoverVid.play().catch(() => {});
+    });
+    card.addEventListener('mouseleave', () => {
+      if (hoverVid) { hoverVid.pause(); hoverVid.remove(); hoverVid = null; }
+    });
+  }
 
   /* Username badge — same style as the count badge, top-left */
   if (_mode === 'subreddit' && item.author) {
@@ -1755,6 +1846,66 @@ async function startScrape() {
   } finally {
     S.loading          = false;
     scrapeBtn.disabled = false;
+  }
+}
+
+/* ── Subreddit finder ────────────────────────────── */
+let _subSearchTimer = null;
+
+$('find-sub-btn').addEventListener('click', () => {
+  const panel = $('sub-finder');
+  panel.hidden = !panel.hidden;
+  $('find-sub-btn').classList.toggle('active', !panel.hidden);
+  if (!panel.hidden) $('sub-search').focus();
+});
+
+$('sub-search').addEventListener('input', () => {
+  clearTimeout(_subSearchTimer);
+  const q = $('sub-search').value.trim();
+  if (!q) { $('sub-results').innerHTML = ''; return; }
+  _subSearchTimer = setTimeout(() => searchSubs(q), 400);
+});
+
+async function searchSubs(q) {
+  const res = $('sub-results');
+  res.innerHTML = '<div style="color:var(--muted);font-size:.85rem;padding:4px 0">Searching…</div>';
+  try {
+    const r = await apiFetch(
+      `https://www.reddit.com/subreddits/search.json?q=${encodeURIComponent(q)}&limit=25&raw_json=1&include_over_18=1`
+    );
+    if (!r.ok) throw new Error();
+    const { data } = await r.json();
+    const subs = data.children.map(c => c.data);
+    if (!subs.length) {
+      res.innerHTML = '<div style="color:var(--muted);font-size:.85rem;padding:4px 0">No subreddits found.</div>';
+      return;
+    }
+    res.innerHTML = '';
+    for (const s of subs) {
+      const card = document.createElement('div');
+      card.className = 'sub-result';
+      card.innerHTML =
+        `<div class="sub-result-left">` +
+          `<div class="sub-result-name">r/${htmlEsc(s.display_name)}</div>` +
+          `<div class="sub-result-meta">${(s.subscribers || 0).toLocaleString()} members</div>` +
+        `</div>` +
+        (s.over18 ? `<span class="nsfw-pill">NSFW</span>` : '') +
+        `<div class="sub-result-desc">${htmlEsc(s.public_description || s.title || '')}</div>`;
+      card.addEventListener('click', () => {
+        _mode = 'subreddit';
+        $('mode-sub').classList.add('active');
+        $('mode-user').classList.remove('active');
+        $('sort-row').removeAttribute('hidden');
+        usernameEl.placeholder = 'Subreddit name (e.g. pics)';
+        usernameEl.value = s.display_name;
+        $('sub-finder').hidden = true;
+        $('find-sub-btn').classList.remove('active');
+        startScrape();
+      });
+      res.appendChild(card);
+    }
+  } catch {
+    res.innerHTML = '<div style="color:var(--muted);font-size:.85rem;padding:4px 0">Search failed.</div>';
   }
 }
 
