@@ -1545,81 +1545,64 @@ async function coomerFetch(url) {
 }
 
 async function fetchCoomerPosts() {
-  /* Step 1 — search for the creator to get the correct service + user ID */
-  let targets = [];
-  const searchRes = await coomerFetch(
-    `https://coomer.st/api/v1/search/creator?q=${encodeURIComponent(S.user)}`
-  );
-  if (searchRes) {
-    try {
-      const list = await searchRes.json();
-      /* Prefer exact match on id or name; fall back to all results */
-      const exact = list.filter(c =>
-        (c.id   || '').toLowerCase() === S.user.toLowerCase() ||
-        (c.name || '').toLowerCase() === S.user.toLowerCase()
-      );
-      targets = (exact.length ? exact : list).map(c => ({ service: c.service, id: c.id }));
-    } catch {}
-  }
+  /* Parse service + user ID from a coomer.st profile URL */
+  const m = S.user.match(/coomer\.st\/([^/]+)\/user\/([^/?#\s]+)/i);
+  if (!m) throw new Error('Paste a coomer.st profile URL, e.g. https://coomer.st/onlyfans/user/name');
+  const service = m[1];
+  const id      = m[2];
+  S.user = id; /* use just the ID for ZIP naming */
 
-  /* Step 2 — if search failed/empty, brute-force known services */
-  if (!targets.length)
-    targets = ['onlyfans', 'fansly'].map(s => ({ service: s, id: S.user }));
+  const base = `https://coomer.st/api/v1/${service}/user/${encodeURIComponent(id)}`;
+  let offset = 0;
 
-  /* Step 3 — fetch posts for every resolved target */
-  for (const { service, id } of targets) {
-    let offset = 0;
-    const base = `https://coomer.st/api/v1/${service}/user/${encodeURIComponent(id)}`;
+  for (let page = 0; page < CFG.maxPages; page++) {
+    setProgress('Collecting posts…', `${total()} items`, null);
+    const res = await coomerFetch(`${base}?o=${offset}`);
+    if (!res) break;
 
-    for (let page = 0; page < CFG.maxPages; page++) {
-      setProgress('Collecting posts…', `${total()} items`, null);
-      const res = await coomerFetch(`${base}?o=${offset}`);
-      if (!res) break;
+    let posts;
+    try { posts = await res.json(); } catch { break; }
+    if (!Array.isArray(posts) || !posts.length) break;
 
-      let posts;
-      try { posts = await res.json(); } catch { break; }
-      if (!Array.isArray(posts) || !posts.length) break;
+    const batch = { images: [], gifs: [], videos: [] };
+    for (const post of posts) {
+      const postUrl = `https://coomer.st/${service}/user/${id}/post/${post.id}`;
+      const title   = post.title || '';
+      const author  = id;
+      const files   = [
+        ...(post.file?.path ? [post.file] : []),
+        ...(post.attachments || []),
+      ];
 
-      const batch = { images: [], gifs: [], videos: [] };
-      for (const post of posts) {
-        const postUrl = `https://coomer.st/${service}/user/${encodeURIComponent(id)}/post/${post.id}`;
-        const title   = post.title || '';
-        const author  = post.user  || id;
-        const files   = [
-          ...(post.file?.path ? [post.file] : []),
-          ...(post.attachments || []),
-        ];
+      for (const f of files) {
+        if (!f.path) continue;
+        const src     = `https://coomer.st${f.path}`;
+        const preview = `https://img.coomer.st/thumbnail${f.path}`;
+        const fname   = (f.name || f.path).toLowerCase();
 
-        for (const f of files) {
-          if (!f.path) continue;
-          const src     = `https://coomer.st${f.path}`;
-          const preview = `https://img.coomer.st/thumbnail${f.path}`;
-          const fname   = (f.name || f.path).toLowerCase();
+        let cat;
+        if (/\.(mp4|webm|mov|m4v)$/.test(fname))             cat = 'videos';
+        else if (/\.gif$/.test(fname))                         cat = 'gifs';
+        else if (/\.(jpe?g|png|webp|bmp|avif)$/.test(fname)) cat = 'images';
+        else continue;
 
-          let cat;
-          if (/\.(mp4|webm|mov|m4v)$/.test(fname))             cat = 'videos';
-          else if (/\.gif$/.test(fname))                         cat = 'gifs';
-          else if (/\.(jpe?g|png|webp|bmp|avif)$/.test(fname)) cat = 'images';
-          else continue;
-
-          const item = { cat, src, preview,
-            poster: cat === 'videos' ? preview : null,
-            postUrl, title, author };
-          S.items[cat].push(item);
-          batch[cat].push(item);
-        }
+        const item = { cat, src, preview,
+          poster: cat === 'videos' ? preview : null,
+          postUrl, title, author };
+        S.items[cat].push(item);
+        batch[cat].push(item);
       }
-
-      appendToGrids(batch);
-      updateCounts();
-
-      offset += 50;
-      if (posts.length < 50) break;
-      await sleep(CFG.apiDelay);
     }
+
+    appendToGrids(batch);
+    updateCounts();
+
+    offset += 50;
+    if (posts.length < 50) break;
+    await sleep(CFG.apiDelay);
   }
 
-  if (total() === 0) throw new Error(`Coomer: no posts found for "${S.user}".`);
+  if (total() === 0) throw new Error('No media found for this creator.');
 }
 
 /* ── Download selected ───────────────────────────── */
@@ -1789,7 +1772,7 @@ $('mode-coomer').addEventListener('click', () => {
   $('mode-user').classList.remove('active');
   $('mode-sub').classList.remove('active');
   $('sort-row').setAttribute('hidden', '');
-  usernameEl.placeholder = 'Coomer username';
+  usernameEl.placeholder = 'Coomer profile URL (e.g. coomer.st/onlyfans/user/name)';
 });
 
 /* ── Sort toggle (subreddit mode only) ───────────── */
