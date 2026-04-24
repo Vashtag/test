@@ -1533,8 +1533,16 @@ async function fetchRgBlob(rgid, srcSd) {
 
 /* Fetch a coomer.st API URL, cycling through all CORS proxies until one works */
 async function coomerFetch(url) {
-  /* coomer.st requires Accept: text/css to bypass DDoS Guard */
+  /* coomer.st DDoS Guard passes requests through when Accept: text/css is set.
+     Try direct first (browser sends the header natively); proxy fallbacks won't
+     forward custom headers reliably. */
   const opts = { ...BASE_OPTS, headers: { Accept: 'text/css' } };
+  try {
+    const r = await fetch(url, opts);
+    if (r.ok) return r;
+    console.log('[coomer] direct status:', r.status);
+  } catch (e) { console.log('[coomer] direct failed (CORS?):', e.message); }
+
   for (const px of DL_PROXIES.slice(1)) {
     try {
       const r = await fetch(px(url), opts);
