@@ -1533,9 +1533,11 @@ async function fetchRgBlob(rgid, srcSd) {
 
 /* Fetch a coomer.st API URL, cycling through all CORS proxies until one works */
 async function coomerFetch(url) {
+  /* coomer.st requires Accept: text/css to bypass DDoS Guard */
+  const opts = { ...BASE_OPTS, headers: { Accept: 'text/css' } };
   for (const px of DL_PROXIES.slice(1)) {
     try {
-      const r = await fetch(px(url), BASE_OPTS);
+      const r = await fetch(px(url), opts);
       if (r.ok) return r;
     } catch {}
   }
@@ -1551,7 +1553,6 @@ async function fetchCoomerPosts() {
   if (searchRes) {
     try {
       const list = await searchRes.json();
-      console.log('[coomer] search result:', list);
       /* Prefer exact match on id or name; fall back to all results */
       const exact = list.filter(c =>
         (c.id   || '').toLowerCase() === S.user.toLowerCase() ||
@@ -1560,8 +1561,6 @@ async function fetchCoomerPosts() {
       targets = (exact.length ? exact : list).map(c => ({ service: c.service, id: c.id }));
     } catch {}
   }
-
-  console.log('[coomer] targets:', targets);
 
   /* Step 2 — if search failed/empty, brute-force known services */
   if (!targets.length)
@@ -1575,15 +1574,10 @@ async function fetchCoomerPosts() {
     for (let page = 0; page < CFG.maxPages; page++) {
       setProgress('Collecting posts…', `${total()} items`, null);
       const res = await coomerFetch(`${base}?o=${offset}`);
-      if (!res) { console.log('[coomer] all proxies failed for', base); break; }
+      if (!res) break;
 
       let posts;
-      try {
-        const text = await res.text();
-        console.log('[coomer] raw response (' + service + '/' + id + ' o=' + offset + '):', text.slice(0, 300));
-        posts = JSON.parse(text);
-      } catch (e) { console.log('[coomer] JSON parse error', e); break; }
-      console.log('[coomer] posts page o=' + offset + ':', Array.isArray(posts) ? posts.length + ' posts' : posts);
+      try { posts = await res.json(); } catch { break; }
       if (!Array.isArray(posts) || !posts.length) break;
 
       const batch = { images: [], gifs: [], videos: [] };
@@ -1606,7 +1600,7 @@ async function fetchCoomerPosts() {
           if (/\.(mp4|webm|mov|m4v)$/.test(fname))             cat = 'videos';
           else if (/\.gif$/.test(fname))                         cat = 'gifs';
           else if (/\.(jpe?g|png|webp|bmp|avif)$/.test(fname)) cat = 'images';
-          else { console.log('[coomer] skipped file (unknown ext):', fname); continue; }
+          else continue;
 
           const item = { cat, src, preview,
             poster: cat === 'videos' ? preview : null,
