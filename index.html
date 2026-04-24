@@ -554,18 +554,17 @@
     #find-sub-btn:hover:not(:disabled) { background: var(--bg); border-color: var(--muted); }
     #find-sub-btn.active { border-color: var(--blue); color: var(--blue); }
 
-    /* ── Subreddit finder panel ──────────────────── */
-    #sub-finder {
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
-      padding: 16px 24px;
-      max-height: calc(100vh - 58px);
-      overflow-y: auto;
+    /* ── Subreddit finder page ───────────────────── */
+    #finder-page {
+      max-width: 1400px;
+      margin: 20px auto 60px;
+      padding: 0 24px;
     }
-    .sub-finder-inner { max-width: 1400px; margin: 0 auto; }
     #sub-search {
       width: 100%;
-      margin-bottom: 14px;
+      font-size: 1rem;
+      padding: 11px 16px;
+      margin-bottom: 18px;
     }
     #sub-results {
       display: grid;
@@ -640,14 +639,6 @@
   </div>
 </header>
 
-<!-- ── Subreddit finder panel ─────────────────────── -->
-<div id="sub-finder" hidden>
-  <div class="sub-finder-inner">
-    <input type="text" id="sub-search" placeholder="Search subreddits by topic…" autocomplete="off" spellcheck="false" />
-    <div id="sub-results"></div>
-  </div>
-</div>
-
 <!-- ── Profile card ───────────────────────────────── -->
 <div id="profile-card" hidden>
   <div class="profile-inner">
@@ -693,6 +684,14 @@
     <button id="load-more-btn">Load 200 more</button>
   </div>
   <div id="empty-notice" hidden>No images, GIFs, or videos found for this user.</div>
+</div>
+
+<!-- ── Subreddit finder page ──────────────────────── -->
+<div id="finder-page" hidden>
+  <div id="finder-inner">
+    <input type="text" id="sub-search" placeholder="Search subreddits by name or topic…" autocomplete="off" spellcheck="false" />
+    <div id="sub-results"></div>
+  </div>
 </div>
 
 <!-- ── Download bar (sticky footer) ──────────────── -->
@@ -1854,13 +1853,21 @@ async function startScrape() {
 
 /* ── Subreddit finder ────────────────────────────── */
 let _subSearchTimer = null;
+let _finderOpen = false;
 
-$('find-sub-btn').addEventListener('click', () => {
-  const panel = $('sub-finder');
-  panel.hidden = !panel.hidden;
-  $('find-sub-btn').classList.toggle('active', !panel.hidden);
-  if (!panel.hidden) $('sub-search').focus();
-});
+function setFinderOpen(open) {
+  _finderOpen = open;
+  $('finder-page').hidden  = !open;
+  $('find-sub-btn').classList.toggle('active', open);
+  /* Hide all regular page content while finder is showing */
+  $('profile-card').setAttribute('hidden', '');
+  $('progress-area').hidden = open;
+  $('error-area').hidden    = open;
+  $('main').hidden          = open;
+  if (open) setTimeout(() => $('sub-search').focus(), 50);
+}
+
+$('find-sub-btn').addEventListener('click', () => setFinderOpen(!_finderOpen));
 
 $('sub-search').addEventListener('input', () => {
   clearTimeout(_subSearchTimer);
@@ -1878,8 +1885,20 @@ async function searchSubs(q) {
     );
     if (!r.ok) throw new Error();
     const { data } = await r.json();
-    const subs = data.children.map(c => c.data)
-      .sort((a, b) => (b.subscribers || 0) - (a.subscribers || 0));
+    const raw = data.children.map(c => c.data);
+    const ql  = q.toLowerCase();
+    /* Sort: exact name → name starts-with → name contains → rest; then by subscribers */
+    const rank = s => {
+      const n = (s.display_name || '').toLowerCase();
+      if (n === ql)            return 0;
+      if (n.startsWith(ql))   return 1;
+      if (n.includes(ql))     return 2;
+      return 3;
+    };
+    const subs = raw.sort((a, b) => {
+      const dr = rank(a) - rank(b);
+      return dr !== 0 ? dr : (b.subscribers || 0) - (a.subscribers || 0);
+    });
     if (!subs.length) {
       res.innerHTML = '<div style="color:var(--muted);font-size:.85rem;padding:4px 0">No subreddits found.</div>';
       return;
@@ -1902,8 +1921,7 @@ async function searchSubs(q) {
         $('sort-row').removeAttribute('hidden');
         usernameEl.placeholder = 'Subreddit name (e.g. pics)';
         usernameEl.value = s.display_name;
-        $('sub-finder').hidden = true;
-        $('find-sub-btn').classList.remove('active');
+        setFinderOpen(false);
         startScrape();
       });
       res.appendChild(card);
