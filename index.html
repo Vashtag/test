@@ -1578,7 +1578,11 @@ async function fetchCoomerPosts() {
       if (!res) { console.log('[coomer] all proxies failed for', base); break; }
 
       let posts;
-      try { posts = await res.json(); } catch (e) { console.log('[coomer] JSON parse error', e); break; }
+      try {
+        const text = await res.text();
+        console.log('[coomer] raw response (' + service + '/' + id + ' o=' + offset + '):', text.slice(0, 300));
+        posts = JSON.parse(text);
+      } catch (e) { console.log('[coomer] JSON parse error', e); break; }
       console.log('[coomer] posts page o=' + offset + ':', Array.isArray(posts) ? posts.length + ' posts' : posts);
       if (!Array.isArray(posts) || !posts.length) break;
 
