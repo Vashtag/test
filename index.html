@@ -559,16 +559,19 @@
       background: var(--surface);
       border-bottom: 1px solid var(--border);
       padding: 16px 24px;
-      max-height: 420px;
+      max-height: calc(100vh - 58px);
       overflow-y: auto;
     }
     .sub-finder-inner { max-width: 1400px; margin: 0 auto; }
     #sub-search {
       width: 100%;
-      max-width: 480px;
       margin-bottom: 14px;
     }
-    #sub-results { display: flex; flex-direction: column; gap: 8px; }
+    #sub-results {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 8px;
+    }
     .sub-result {
       display: flex;
       align-items: center;
@@ -1875,7 +1878,8 @@ async function searchSubs(q) {
     );
     if (!r.ok) throw new Error();
     const { data } = await r.json();
-    const subs = data.children.map(c => c.data);
+    const subs = data.children.map(c => c.data)
+      .sort((a, b) => (b.subscribers || 0) - (a.subscribers || 0));
     if (!subs.length) {
       res.innerHTML = '<div style="color:var(--muted);font-size:.85rem;padding:4px 0">No subreddits found.</div>';
       return;
