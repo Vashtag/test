@@ -1531,30 +1531,58 @@ async function fetchRgBlob(rgid, srcSd) {
 
 /* ── Coomer API ──────────────────────────────────── */
 
-async function fetchCoomerPosts() {
-  const SERVICES = ['onlyfans', 'fansly'];
+/* Fetch a coomer.st API URL, cycling through all CORS proxies until one works */
+async function coomerFetch(url) {
+  for (const px of DL_PROXIES.slice(1)) {
+    try {
+      const r = await fetch(px(url), BASE_OPTS);
+      if (r.ok) return r;
+    } catch {}
+  }
+  return null;
+}
 
-  for (const service of SERVICES) {
+async function fetchCoomerPosts() {
+  /* Step 1 — search for the creator to get the correct service + user ID */
+  let targets = [];
+  const searchRes = await coomerFetch(
+    `https://coomer.st/api/v1/search/creator?q=${encodeURIComponent(S.user)}`
+  );
+  if (searchRes) {
+    try {
+      const list = await searchRes.json();
+      /* Prefer exact match on id or name; fall back to all results */
+      const exact = list.filter(c =>
+        (c.id   || '').toLowerCase() === S.user.toLowerCase() ||
+        (c.name || '').toLowerCase() === S.user.toLowerCase()
+      );
+      targets = (exact.length ? exact : list).map(c => ({ service: c.service, id: c.id }));
+    } catch {}
+  }
+
+  /* Step 2 — if search failed/empty, brute-force known services */
+  if (!targets.length)
+    targets = ['onlyfans', 'fansly'].map(s => ({ service: s, id: S.user }));
+
+  /* Step 3 — fetch posts for every resolved target */
+  for (const { service, id } of targets) {
     let offset = 0;
-    const base = `https://coomer.st/api/v1/${service}/user/${encodeURIComponent(S.user)}`;
+    const base = `https://coomer.st/api/v1/${service}/user/${encodeURIComponent(id)}`;
 
     for (let page = 0; page < CFG.maxPages; page++) {
       setProgress('Collecting posts…', `${total()} items`, null);
-      let res;
-      try { res = await fetch(PROXY(`${base}?o=${offset}`), BASE_OPTS); }
-      catch { break; }
+      const res = await coomerFetch(`${base}?o=${offset}`);
+      if (!res) break;
 
-      if (res.status === 404) break; /* not on this service — try next */
-      if (!res.ok) break;
-
-      const posts = await res.json();
-      if (!posts.length) break;
+      let posts;
+      try { posts = await res.json(); } catch { break; }
+      if (!Array.isArray(posts) || !posts.length) break;
 
       const batch = { images: [], gifs: [], videos: [] };
       for (const post of posts) {
-        const postUrl = `https://coomer.st/${service}/user/${encodeURIComponent(S.user)}/post/${post.id}`;
+        const postUrl = `https://coomer.st/${service}/user/${encodeURIComponent(id)}/post/${post.id}`;
         const title   = post.title || '';
-        const author  = post.user  || S.user;
+        const author  = post.user  || id;
         const files   = [
           ...(post.file?.path ? [post.file] : []),
           ...(post.attachments || []),
@@ -1589,7 +1617,7 @@ async function fetchCoomerPosts() {
     }
   }
 
-  if (total() === 0) throw new Error(`Coomer user "${S.user}" not found on any platform.`);
+  if (total() === 0) throw new Error(`Coomer: no posts found for "${S.user}".`);
 }
 
 /* ── Download selected ───────────────────────────── */
