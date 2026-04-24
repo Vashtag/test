@@ -570,6 +570,7 @@
         <button class="sort-btn mode-btn" data-sort="rising">Rising</button>
       </div>
       <input type="text" id="username" placeholder="Reddit username (e.g. spez)" autocomplete="off" spellcheck="false" />
+      <input type="text" id="coomer-proxy" placeholder="Cloudflare Worker URL (required for Coomer)" autocomplete="off" spellcheck="false" hidden style="max-width:320px" />
       <button id="scrape-btn">Scrape</button>
       <button id="select-btn" hidden>Select</button>
     </div>
@@ -1533,13 +1534,19 @@ async function fetchRgBlob(rgid, srcSd) {
 
 /* Fetch a coomer.st API URL, cycling through all CORS proxies until one works */
 async function coomerFetch(url) {
-  /* coomer.st DDoS Guard blocks and caches responses for proxy IPs.
-     Adding a unique _cb= param makes each request a fresh cache entry so DDG
-     re-evaluates the Accept: text/css bypass header instead of serving the
-     cached block page. */
+  /* Use the user-supplied Cloudflare Worker which forwards Accept: text/css
+     server-side — public CORS proxies strip that header so DDG always blocks them. */
+  const workerUrl = localStorage.getItem('coomerProxyUrl') || '';
+  if (workerUrl) {
+    try {
+      const r = await fetch(`${workerUrl}?url=${encodeURIComponent(url)}`, BASE_OPTS);
+      if (r.ok) return r;
+    } catch {}
+  }
+
+  /* Fallback: public proxies with cache-bust (likely still blocked by DDG) */
   const opts = { ...BASE_OPTS, headers: { Accept: 'text/css' } };
   const bust = url + (url.includes('?') ? '&' : '?') + '_cb=' + Date.now();
-
   for (const px of DL_PROXIES.slice(1)) {
     try {
       const r = await fetch(px(bust), opts);
@@ -1755,12 +1762,22 @@ function showError(msg) {
 }
 
 /* ── Mode toggle ─────────────────────────────────── */
+function setCoomerProxyVisible(visible) {
+  const el = $('coomer-proxy');
+  el.hidden = !visible;
+  if (visible) el.value = localStorage.getItem('coomerProxyUrl') || '';
+}
+$('coomer-proxy').addEventListener('input', () => {
+  localStorage.setItem('coomerProxyUrl', $('coomer-proxy').value.trim());
+});
+
 $('mode-user').addEventListener('click', () => {
   _mode = 'user';
   $('mode-user').classList.add('active');
   $('mode-sub').classList.remove('active');
   $('mode-coomer').classList.remove('active');
   $('sort-row').setAttribute('hidden', '');
+  setCoomerProxyVisible(false);
   usernameEl.placeholder = 'Reddit username (e.g. spez)';
 });
 $('mode-sub').addEventListener('click', () => {
@@ -1769,6 +1786,7 @@ $('mode-sub').addEventListener('click', () => {
   $('mode-user').classList.remove('active');
   $('mode-coomer').classList.remove('active');
   $('sort-row').removeAttribute('hidden');
+  setCoomerProxyVisible(false);
   usernameEl.placeholder = 'Subreddit name (e.g. pics)';
 });
 $('mode-coomer').addEventListener('click', () => {
@@ -1777,6 +1795,7 @@ $('mode-coomer').addEventListener('click', () => {
   $('mode-user').classList.remove('active');
   $('mode-sub').classList.remove('active');
   $('sort-row').setAttribute('hidden', '');
+  setCoomerProxyVisible(true);
   usernameEl.placeholder = 'Coomer profile URL (e.g. coomer.st/onlyfans/user/name)';
 });
 
