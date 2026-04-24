@@ -559,9 +559,8 @@
     <h1>Reddit Media Scraper</h1>
     <div class="search-row">
       <div class="mode-toggle">
-        <button id="mode-user"   class="mode-btn active">u/</button>
-        <button id="mode-sub"    class="mode-btn">r/</button>
-        <button id="mode-coomer" class="mode-btn">Coomer</button>
+        <button id="mode-user" class="mode-btn active">u/</button>
+        <button id="mode-sub"  class="mode-btn">r/</button>
       </div>
       <div id="sort-row" class="mode-toggle" hidden>
         <button class="sort-btn mode-btn active" data-sort="hot">Hot</button>
@@ -570,8 +569,7 @@
         <button class="sort-btn mode-btn" data-sort="rising">Rising</button>
       </div>
       <input type="text" id="username" placeholder="Reddit username (e.g. spez)" autocomplete="off" spellcheck="false" />
-      <input type="text" id="coomer-proxy" placeholder="Cloudflare Worker URL (required for Coomer)" autocomplete="off" spellcheck="false" hidden style="max-width:320px" />
-      <button id="scrape-btn">Scrape</button>
+<button id="scrape-btn">Scrape</button>
       <button id="select-btn" hidden>Select</button>
     </div>
   </div>
@@ -688,7 +686,7 @@ let S = mkState();
 
 let _rgToken = null, _rgTokenTs = 0;
 let _useProxy = false;
-let _mode = 'user'; /* 'user' | 'subreddit' | 'coomer' */
+let _mode = 'user'; /* 'user' | 'subreddit' */
 let _sort = 'hot';  /* subreddit sort: hot | top | new | rising */
 
 /* ── Fetch with CORS-proxy fallback ──────────────── */
@@ -1532,91 +1530,6 @@ async function fetchRgBlob(rgid, srcSd) {
 
 /* ── Coomer API ──────────────────────────────────── */
 
-/* Fetch a coomer.st API URL, cycling through all CORS proxies until one works */
-async function coomerFetch(url) {
-  /* Use the user-supplied Cloudflare Worker which forwards Accept: text/css
-     server-side — public CORS proxies strip that header so DDG always blocks them. */
-  const workerUrl = localStorage.getItem('coomerProxyUrl') || '';
-  if (workerUrl) {
-    try {
-      const r = await fetch(`${workerUrl}?url=${encodeURIComponent(url)}`, BASE_OPTS);
-      if (r.ok) return r;
-    } catch {}
-  }
-
-  /* Fallback: public proxies with cache-bust (likely still blocked by DDG) */
-  const opts = { ...BASE_OPTS, headers: { Accept: 'text/css' } };
-  const bust = url + (url.includes('?') ? '&' : '?') + '_cb=' + Date.now();
-  for (const px of DL_PROXIES.slice(1)) {
-    try {
-      const r = await fetch(px(bust), opts);
-      if (r.ok) return r;
-    } catch {}
-  }
-  return null;
-}
-
-async function fetchCoomerPosts() {
-  /* Parse service + user ID from a coomer.st profile URL */
-  const m = S.user.match(/coomer\.st\/([^/]+)\/user\/([^/?#\s]+)/i);
-  if (!m) throw new Error('Paste a coomer.st profile URL, e.g. https://coomer.st/onlyfans/user/name');
-  const service = m[1];
-  const id      = m[2];
-  S.user = id; /* use just the ID for ZIP naming */
-
-  const base = `https://coomer.st/api/v1/${service}/user/${encodeURIComponent(id)}`;
-  let offset = 0;
-
-  for (let page = 0; page < CFG.maxPages; page++) {
-    setProgress('Collecting posts…', `${total()} items`, null);
-    const res = await coomerFetch(`${base}?o=${offset}`);
-    if (!res) break;
-
-    let posts;
-    try { posts = await res.json(); } catch { break; }
-    if (!Array.isArray(posts) || !posts.length) break;
-
-    const batch = { images: [], gifs: [], videos: [] };
-    for (const post of posts) {
-      const postUrl = `https://coomer.st/${service}/user/${id}/post/${post.id}`;
-      const title   = post.title || '';
-      const author  = id;
-      const files   = [
-        ...(post.file?.path ? [post.file] : []),
-        ...(post.attachments || []),
-      ];
-
-      for (const f of files) {
-        if (!f.path) continue;
-        const src     = `https://coomer.st${f.path}`;
-        const preview = `https://img.coomer.st/thumbnail${f.path}`;
-        const fname   = (f.name || f.path).toLowerCase();
-
-        let cat;
-        if (/\.(mp4|webm|mov|m4v)$/.test(fname))             cat = 'videos';
-        else if (/\.gif$/.test(fname))                         cat = 'gifs';
-        else if (/\.(jpe?g|png|webp|bmp|avif)$/.test(fname)) cat = 'images';
-        else continue;
-
-        const item = { cat, src, preview,
-          poster: cat === 'videos' ? preview : null,
-          postUrl, title, author };
-        S.items[cat].push(item);
-        batch[cat].push(item);
-      }
-    }
-
-    appendToGrids(batch);
-    updateCounts();
-
-    offset += 50;
-    if (posts.length < 50) break;
-    await sleep(CFG.apiDelay);
-  }
-
-  if (total() === 0) throw new Error('No media found for this creator.');
-}
-
 /* ── Download selected ───────────────────────────── */
 
 async function downloadSelected() {
@@ -1762,41 +1675,19 @@ function showError(msg) {
 }
 
 /* ── Mode toggle ─────────────────────────────────── */
-function setCoomerProxyVisible(visible) {
-  const el = $('coomer-proxy');
-  el.hidden = !visible;
-  if (visible) el.value = localStorage.getItem('coomerProxyUrl') || '';
-}
-$('coomer-proxy').addEventListener('input', () => {
-  localStorage.setItem('coomerProxyUrl', $('coomer-proxy').value.trim());
-});
-
 $('mode-user').addEventListener('click', () => {
   _mode = 'user';
   $('mode-user').classList.add('active');
   $('mode-sub').classList.remove('active');
-  $('mode-coomer').classList.remove('active');
   $('sort-row').setAttribute('hidden', '');
-  setCoomerProxyVisible(false);
   usernameEl.placeholder = 'Reddit username (e.g. spez)';
 });
 $('mode-sub').addEventListener('click', () => {
   _mode = 'subreddit';
   $('mode-sub').classList.add('active');
   $('mode-user').classList.remove('active');
-  $('mode-coomer').classList.remove('active');
   $('sort-row').removeAttribute('hidden');
-  setCoomerProxyVisible(false);
   usernameEl.placeholder = 'Subreddit name (e.g. pics)';
-});
-$('mode-coomer').addEventListener('click', () => {
-  _mode = 'coomer';
-  $('mode-coomer').classList.add('active');
-  $('mode-user').classList.remove('active');
-  $('mode-sub').classList.remove('active');
-  $('sort-row').setAttribute('hidden', '');
-  setCoomerProxyVisible(true);
-  usernameEl.placeholder = 'Coomer profile URL (e.g. coomer.st/onlyfans/user/name)';
 });
 
 /* ── Sort toggle (subreddit mode only) ───────────── */
@@ -1844,11 +1735,7 @@ async function startScrape() {
 
   try {
     if (_mode === 'user') fetchUserProfile(S.user); /* fire-and-forget */
-    if (_mode === 'coomer') {
-      await fetchCoomerPosts();
-    } else {
-      await fetchAllPosts();
-    }
+    await fetchAllPosts();
 
     if (total() === 0) {
       $('empty-notice').removeAttribute('hidden');
