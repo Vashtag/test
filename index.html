@@ -1541,7 +1541,7 @@ async function fetchCoomerPosts() {
     for (let page = 0; page < CFG.maxPages; page++) {
       setProgress('Collecting posts…', `${total()} items`, null);
       let res;
-      try { res = await apiFetch(`${base}?o=${offset}`); }
+      try { res = await fetch(PROXY(`${base}?o=${offset}`), BASE_OPTS); }
       catch { break; }
 
       if (res.status === 404) break; /* not on this service — try next */
