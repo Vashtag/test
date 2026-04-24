@@ -1551,6 +1551,7 @@ async function fetchCoomerPosts() {
   if (searchRes) {
     try {
       const list = await searchRes.json();
+      console.log('[coomer] search result:', list);
       /* Prefer exact match on id or name; fall back to all results */
       const exact = list.filter(c =>
         (c.id   || '').toLowerCase() === S.user.toLowerCase() ||
@@ -1559,6 +1560,8 @@ async function fetchCoomerPosts() {
       targets = (exact.length ? exact : list).map(c => ({ service: c.service, id: c.id }));
     } catch {}
   }
+
+  console.log('[coomer] targets:', targets);
 
   /* Step 2 — if search failed/empty, brute-force known services */
   if (!targets.length)
@@ -1572,10 +1575,11 @@ async function fetchCoomerPosts() {
     for (let page = 0; page < CFG.maxPages; page++) {
       setProgress('Collecting posts…', `${total()} items`, null);
       const res = await coomerFetch(`${base}?o=${offset}`);
-      if (!res) break;
+      if (!res) { console.log('[coomer] all proxies failed for', base); break; }
 
       let posts;
-      try { posts = await res.json(); } catch { break; }
+      try { posts = await res.json(); } catch (e) { console.log('[coomer] JSON parse error', e); break; }
+      console.log('[coomer] posts page o=' + offset + ':', Array.isArray(posts) ? posts.length + ' posts' : posts);
       if (!Array.isArray(posts) || !posts.length) break;
 
       const batch = { images: [], gifs: [], videos: [] };
@@ -1598,7 +1602,7 @@ async function fetchCoomerPosts() {
           if (/\.(mp4|webm|mov|m4v)$/.test(fname))             cat = 'videos';
           else if (/\.gif$/.test(fname))                         cat = 'gifs';
           else if (/\.(jpe?g|png|webp|bmp|avif)$/.test(fname)) cat = 'images';
-          else continue;
+          else { console.log('[coomer] skipped file (unknown ext):', fname); continue; }
 
           const item = { cat, src, preview,
             poster: cat === 'videos' ? preview : null,
