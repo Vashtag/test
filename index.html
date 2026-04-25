@@ -1491,19 +1491,6 @@ function buildCard(item) {
     });
   }
 
-  /* Username badge — same style as the count badge, top-left */
-  if (_mode === 'user' && item.subreddit) {
-    const sb = document.createElement('span');
-    sb.className   = 'author-badge';
-    sb.style.cssText = 'top:auto;bottom:6px;';
-    sb.textContent = `r/${item.subreddit}`;
-    sb.addEventListener('click', e => {
-      e.stopPropagation();
-      window.open(`${location.origin + location.pathname}?r=${encodeURIComponent(item.subreddit)}`, '_blank', 'noopener noreferrer');
-    });
-    card.appendChild(sb);
-  }
-
   if (_mode === 'subreddit' && item.author) {
     const ab = document.createElement('span');
     ab.className  = 'author-badge';
@@ -1516,9 +1503,24 @@ function buildCard(item) {
   }
 
   const cap = document.createElement('div');
-  cap.className   = 'cap';
-  cap.title       = item.title;
-  cap.textContent = item.title || '(untitled)';
+  cap.className = 'cap';
+  cap.title     = item.title;
+  if (_mode === 'user' && item.subreddit) {
+    const titleEl = document.createElement('div');
+    titleEl.textContent = item.title || '(untitled)';
+    titleEl.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    const subEl = document.createElement('a');
+    subEl.textContent = `r/${item.subreddit}`;
+    subEl.href   = `${location.origin + location.pathname}?r=${encodeURIComponent(item.subreddit)}`;
+    subEl.target = '_blank';
+    subEl.rel    = 'noopener noreferrer';
+    subEl.style.cssText = 'color:var(--blue);font-size:0.65rem;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-decoration:none;';
+    subEl.addEventListener('click', e => e.stopPropagation());
+    cap.appendChild(titleEl);
+    cap.appendChild(subEl);
+  } else {
+    cap.textContent = item.title || '(untitled)';
+  }
   card.appendChild(cap);
 
   return card;
