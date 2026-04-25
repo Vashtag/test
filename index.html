@@ -1227,15 +1227,22 @@ function buildCard(item) {
     card.addEventListener('mouseenter', () => {
       if (!item.src || S.selecting) return;
       hoverVid = document.createElement('video');
-      hoverVid.src             = item.src;
-      hoverVid.muted           = true;
-      hoverVid.autoplay        = true;
-      hoverVid.loop            = true;
-      hoverVid.playsInline     = true;
-      hoverVid.referrerPolicy  = 'no-referrer';
-      hoverVid.style.cssText   = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:2;pointer-events:none;border-radius:inherit;';
+      hoverVid.muted       = true;
+      hoverVid.loop        = true;
+      hoverVid.playsInline = true;
+      hoverVid.preload     = 'auto';
+      hoverVid.poster      = item.poster || item.preview || '';
+      hoverVid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:2;pointer-events:none;border-radius:inherit;';
       card.appendChild(hoverVid);
-      hoverVid.play().catch(() => {});
+      /* Set src after appending so the browser starts loading in context */
+      hoverVid.src = item.src;
+      hoverVid.play().catch(() => {
+        /* SD fallback for Redgifs if HD fails */
+        if (item.srcSd && hoverVid) {
+          hoverVid.src = item.srcSd;
+          hoverVid.play().catch(() => {});
+        }
+      });
     });
     card.addEventListener('mouseleave', () => {
       if (hoverVid) { hoverVid.pause(); hoverVid.remove(); hoverVid = null; }
