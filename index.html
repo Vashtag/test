@@ -743,6 +743,7 @@
 <div id="dl-bar" hidden>
   <span id="dl-count-text">0 selected</span>
   <button class="ghost" id="sel-all-btn">Select all</button>
+  <button class="ghost" id="desel-deleted-btn">Deselect deleted</button>
   <button class="ghost" id="desel-btn">Deselect all</button>
   <button id="dl-btn">&#8659; Download selected</button>
 </div>
@@ -1629,6 +1630,12 @@ function updateSelectionUI() {
 
 $('select-btn').addEventListener('click', toggleSelectMode);
 $('sel-all-btn').addEventListener('click', selectAll);
+$('desel-deleted-btn').addEventListener('click', () => {
+  for (const item of [...S.selected]) {
+    if (item.archived) toggleCard(item);
+  }
+  updateSelectionUI();
+});
 $('desel-btn').addEventListener('click', clearSelection);
 $('dl-btn').addEventListener('click', downloadSelected);
 
