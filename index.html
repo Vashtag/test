@@ -1905,29 +1905,7 @@ document.querySelectorAll('.sort-btn').forEach(btn => {
 });
 
 
-/* ── New Search (reset to home) ──────────────────── */
-function resetToHome() {
-  if (S.selecting) toggleSelectMode();
-  S = mkState();
-  _useProxy = false;
-  if (_finderOpen) setFinderOpen(false);
-
-  usernameEl.value = '';
-  scrapeBtn.disabled = false;
-  $('select-btn').setAttribute('hidden', '');
-  $('profile-card').setAttribute('hidden', '');
-  $('main').setAttribute('hidden', '');
-  $('progress-area').setAttribute('hidden', '');
-  $('error-area').setAttribute('hidden', '');
-  $('load-more-row').setAttribute('hidden', '');
-  $('empty-notice').setAttribute('hidden', '');
-  $('grid-images').innerHTML = '';
-  $('grid-gifs').innerHTML   = '';
-  $('grid-videos').innerHTML = '';
-  updateCounts();
-  setTimeout(() => usernameEl.focus(), 50);
-}
-$('new-search-btn').addEventListener('click', resetToHome);
+$('new-search-btn').addEventListener('click', () => window.open(location.href, '_blank'));
 
 /* ── Entry point ─────────────────────────────────── */
 scrapeBtn.addEventListener('click', startScrape);
