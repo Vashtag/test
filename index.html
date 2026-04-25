@@ -1499,7 +1499,7 @@ function buildCard(item) {
     sb.textContent = `r/${item.subreddit}`;
     sb.addEventListener('click', e => {
       e.stopPropagation();
-      window.open(`https://www.reddit.com/r/${encodeURIComponent(item.subreddit)}`, '_blank', 'noopener noreferrer');
+      window.open(`${location.origin + location.pathname}?r=${encodeURIComponent(item.subreddit)}`, '_blank', 'noopener noreferrer');
     });
     card.appendChild(sb);
   }
@@ -2291,13 +2291,13 @@ async function searchSubs(q) {
   }
 }
 
-/* ── Auto-start from ?u=username URL parameter ───────── */
+/* ── Auto-start from ?u=username or ?r=subreddit URL parameter ── */
 (function () {
-  const u = new URLSearchParams(location.search).get('u');
-  if (!u) return;
-  setMode('user');
-  usernameEl.value = u;
-  startScrape();
+  const params = new URLSearchParams(location.search);
+  const u = params.get('u');
+  const r = params.get('r');
+  if (u) { setMode('user');      usernameEl.value = u; startScrape(); }
+  else if (r) { setMode('subreddit'); usernameEl.value = r; startScrape(); }
 }());
 </script>
 </body>
