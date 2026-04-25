@@ -960,7 +960,14 @@ async function fetchUserProfile(user) {
     $('profile-card').removeAttribute('hidden');
 
     const allLinks = socialLinks.map(l => l.url)
-      .concat([...bio.matchAll(/https?:\/\/\S+/g)].map(m => m[0].replace(/[)>.,;'"]+$/, '')));
+      /* Full URLs in bio (with protocol) */
+      .concat([...bio.matchAll(/https?:\/\/\S+/g)].map(m => m[0].replace(/[)>.,;'"]+$/, '')))
+      /* Bare domain URLs in bio — e.g. "onlyfans.com/user" without https:// */
+      .concat(
+        [...bio.matchAll(/\b((?:onlyfans|fansly|redgifs|twitter|x|instagram|tiktok|patreon|manyvids|linktr)\.(?:com|ee)\/[A-Za-z0-9_.@/-]+)/gi)]
+          .map(m => 'https://' + m[1].replace(/[)>.,;'"]+$/, ''))
+      )
+      .filter(Boolean);
 
     const altBtn = $('find-alts-btn');
     altBtn.hidden = (allLinks.length === 0);
