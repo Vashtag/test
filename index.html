@@ -326,6 +326,17 @@
     #dl-btn { background: var(--blue); }
     #dl-btn:hover:not(:disabled) { background: #3a86d4; }
 
+    /* ── New-search button ───────────────────────── */
+    #new-search-btn {
+      margin-left: auto;
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.82rem;
+      white-space: nowrap;
+    }
+    #new-search-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+
     /* ── Select button in header ─────────────────── */
     #select-btn {
       background: none;
@@ -636,6 +647,7 @@
 <button id="scrape-btn">Scrape</button>
       <button id="select-btn" hidden>Select</button>
     </div>
+    <button id="new-search-btn">+ New Search</button>
   </div>
 </header>
 
@@ -1892,6 +1904,30 @@ document.querySelectorAll('.sort-btn').forEach(btn => {
   });
 });
 
+
+/* ── New Search (reset to home) ──────────────────── */
+function resetToHome() {
+  if (S.selecting) toggleSelectMode();
+  S = mkState();
+  _useProxy = false;
+  if (_finderOpen) setFinderOpen(false);
+
+  usernameEl.value = '';
+  scrapeBtn.disabled = false;
+  $('select-btn').setAttribute('hidden', '');
+  $('profile-card').setAttribute('hidden', '');
+  $('main').setAttribute('hidden', '');
+  $('progress-area').setAttribute('hidden', '');
+  $('error-area').setAttribute('hidden', '');
+  $('load-more-row').setAttribute('hidden', '');
+  $('empty-notice').setAttribute('hidden', '');
+  $('grid-images').innerHTML = '';
+  $('grid-gifs').innerHTML   = '';
+  $('grid-videos').innerHTML = '';
+  updateCounts();
+  setTimeout(() => usernameEl.focus(), 50);
+}
+$('new-search-btn').addEventListener('click', resetToHome);
 
 /* ── Entry point ─────────────────────────────────── */
 scrapeBtn.addEventListener('click', startScrape);
