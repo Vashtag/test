@@ -1576,166 +1576,83 @@ async function fetchBlob(url) {
   throw new Error(errors[0] || 'fetch failed');
 }
 
-/* Download a Redgifs URL in 1 MB Range-request chunks through a single proxy.
-   Uses plain credentials:omit — no spoofed Referer, which confuses some proxies. */
-async function fetchRgBlobChunked(url, proxyFn) {
-  const CHUNK    = 1_048_576;
-  const pxOpts   = { credentials: 'omit' };
+/* Open a new tab with all failed Redgifs videos embedded as <video> elements.
+   The browser loads them fine (no CORS needed for <video> src) and the user
+   can right-click each one to "Save video as…". */
+function openRgSavePage(failedItems) {
+  const cards = failedItems.map(({ item, num }) => {
+    const id     = item.rgid;
+    const sd     = item.srcSd || `https://media.redgifs.com/${id}-mobile.mp4`;
+    const hd     = `https://media.redgifs.com/${id}.mp4`;
+    const poster = (item.poster || item.preview || '').replace(/"/g, '&quot;');
+    return `<div class="card">
+  <div class="lbl">#${num}</div>
+  <video src="${sd.replace(/"/g, '&quot;')}" ${poster ? `poster="${poster}"` : ''}
+    controls preload="metadata" onerror="this.src='${hd.replace(/"/g, '&quot;')}'"
+    style="width:100%;border-radius:6px;display:block;max-height:380px;background:#000;object-fit:contain"></video>
+  <div class="hint">Right-click &rarr; <strong>Save video as&hellip;</strong></div>
+</div>`;
+  }).join('\n');
 
-  const probe = await fetch(proxyFn(url), { ...pxOpts, headers: { Range: 'bytes=0-0' } });
+  const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<title>Save Videos (${failedItems.length})</title>
+<style>
+*{box-sizing:border-box}
+body{background:#111;color:#ddd;font:14px/1.5 sans-serif;margin:0;padding:20px}
+h2{margin:0 0 8px;font-size:1.15rem}
+.banner{background:#1a1400;border:1px solid #f59e0b;border-radius:8px;padding:11px 14px;margin-bottom:20px;font-size:.9rem}
+.banner strong{color:#fbbf24}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.card{background:#1c1c1c;border-radius:10px;padding:12px}
+.lbl{font-size:.78rem;color:#777;margin-bottom:6px}
+.hint{margin-top:7px;font-size:.82rem;color:#aaa}
+.hint strong{color:#fbbf24}
+</style></head>
+<body>
+<h2>Videos that couldn't be fetched automatically (${failedItems.length})</h2>
+<div class="banner">
+  <strong>How to save:</strong> right-click any video below and choose
+  <strong>"Save video as…"</strong> — or tap the ⋮ / download icon inside the player.
+</div>
+<div class="grid">${cards}</div>
+</body></html>`;
 
-  if (probe.ok && probe.status === 200) {
-    const b = await streamBlob(probe);
-    if (b.size >= 50_000) return b;
-    throw new Error('full response too small');
-  }
-
-  if (probe.status !== 206) throw new Error('probe: ' + probe.status);
-
-  const cr    = probe.headers.get('content-range') || '';
-  const total = parseInt(cr.split('/')[1] || '0', 10);
-  if (!total || total < 50_000) throw new Error('bad content-range: ' + cr);
-  try { await probe.arrayBuffer(); } catch {}
-
-  const parts = [];
-  for (let off = 0; off < total; off += CHUNK) {
-    const end = Math.min(off + CHUNK - 1, total - 1);
-    setProgress('Downloading…', `${(off/1e6).toFixed(1)} / ${(total/1e6).toFixed(1)} MB`, off / total);
-    const r = await fetch(proxyFn(url), { ...pxOpts, headers: { Range: `bytes=${off}-${end}` } });
-    if (r.status !== 206 && !r.ok) throw new Error('chunk ' + r.status);
-    parts.push(await r.arrayBuffer());
-  }
-  return new Blob(parts, { type: 'video/mp4' });
-}
-
-/* Record a video by playing it in a hidden element and capturing via MediaRecorder.
-   Works for any URL the browser can load as <video> — no CORS needed for playback. */
-function fetchRgBlobViaCapture(url, rgid) {
-  return new Promise((resolve, reject) => {
-    const video = document.createElement('video');
-    video.muted       = true;
-    video.playsInline = true;
-    video.style.cssText = 'position:fixed;width:2px;height:2px;top:0;left:0;opacity:0.01;pointer-events:none;';
-    document.body.appendChild(video);
-
-    let recorder, done = false;
-    const finish = (blob, err) => {
-      if (done) return; done = true;
-      clearTimeout(guard);
-      try { video.pause(); video.src = ''; video.remove(); } catch {}
-      try { if (recorder && recorder.state !== 'inactive') recorder.stop(); } catch {}
-      err ? reject(err) : resolve(blob);
-    };
-
-    /* Hard cap: duration*1.2 + 10 s, minimum 30 s */
-    let guard = setTimeout(() => finish(null, new Error('capture timeout')), 30_000);
-
-    video.addEventListener('error', () =>
-      finish(null, new Error('video error: ' + (video.error?.message || 'load failed'))));
-
-    video.addEventListener('loadedmetadata', () => {
-      const dur = isFinite(video.duration) && video.duration > 0 ? video.duration : 120;
-      clearTimeout(guard);
-      guard = setTimeout(() => finish(null, new Error('capture timeout')), dur * 1200 + 10_000);
-
-      try {
-        const captureFn = video.captureStream || video.mozCaptureStream;
-        if (!captureFn) throw new Error('captureStream not supported');
-        const stream   = captureFn.call(video);
-        const mimeType = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
-          .find(t => { try { return MediaRecorder.isTypeSupported(t); } catch { return false; } })
-          || 'video/webm';
-
-        recorder = new MediaRecorder(stream, { mimeType });
-        const chunks = [];
-        recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-        recorder.onstop = () => {
-          const blob = new Blob(chunks, { type: recorder.mimeType });
-          finish(blob.size >= 50_000 ? blob : null,
-                 blob.size < 50_000 ? new Error('recorded blob too small: ' + blob.size) : null);
-        };
-        recorder.onerror = e => finish(null, new Error('recorder: ' + e.error));
-
-        recorder.start(500);
-
-        const ticker = setInterval(() => {
-          if (!document.contains(video)) { clearInterval(ticker); return; }
-          setProgress('Recording video…',
-            `${video.currentTime.toFixed(1)} / ${dur.toFixed(1)} s`,
-            video.currentTime / dur);
-        }, 500);
-
-        video.addEventListener('ended', () => {
-          clearInterval(ticker);
-          if (recorder.state === 'recording') recorder.stop();
-        });
-
-        video.play().catch(e => finish(null, e));
-      } catch (e) { finish(null, e); }
-    });
-
-    video.src = url;
-  });
+  const blobUrl = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+  const win     = window.open(blobUrl, '_blank');
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
+  return !!win;
 }
 
 async function fetchRgBlob(rgid, srcSd) {
-  const hdUrl  = `https://media.redgifs.com/${rgid}.mp4`;
-  const sdUrl  = srcSd || `https://media.redgifs.com/${rgid}-mobile.mp4`;
-  /* Only used for direct (non-proxy) fetches where the Referer may help */
-  const direct = { credentials: 'omit', referrer: 'https://www.redgifs.com/', referrerPolicy: 'unsafe-url' };
-  /* Proxy fetches: no Referer spoofing — a fake Referer to corsproxy.io causes mismatches */
-  const pxOpts = { credentials: 'omit' };
+  const hdUrl = `https://media.redgifs.com/${rgid}.mp4`;
+  const sdUrl = srcSd || `https://media.redgifs.com/${rgid}-mobile.mp4`;
 
-  const ctOk = r => {
+  const tryFetch = async (url, opts) => {
+    const r = await fetch(url, opts);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const ct = (r.headers.get('content-type') || '').toLowerCase();
-    return !ct.startsWith('image/') && !ct.startsWith('text/') && ct !== 'application/json';
+    if (ct.startsWith('image/') || ct.startsWith('text/') || ct === 'application/json')
+      throw new Error(`bad content-type: ${ct}`);
+    const b = await streamBlob(r);
+    if (b.size < 50_000) throw new Error(`too small: ${b.size}`);
+    return b;
   };
-  const readVideo = async r => {
-    const blob = await streamBlob(r);
-    return blob.size >= 50_000 ? blob : null;
-  };
 
+  /* 1 — direct (CORS will reject, but try once in case CDN ever adds ACAO) */
   for (const u of [sdUrl, hdUrl]) {
-    /* 1 — direct (CORS will fail, but worth one try in case CDN adds ACAO) */
-    try {
-      const r = await fetch(u, direct);
-      if (r.ok && ctOk(r)) { const b = await readVideo(r); if (b) return b; }
-    } catch {}
-
-    /* 2 — CORS proxies, plain opts (no spoofed Referer) */
-    for (const px of DL_PROXIES.slice(1)) {
-      try {
-        const r = await fetch(px(u), pxOpts);
-        if (r.ok && ctOk(r)) { const b = await readVideo(r); if (b) return b; }
-      } catch {}
-    }
+    try { return await tryFetch(u, { credentials: 'omit' }); } catch {}
   }
 
-  /* 3 — auth token via proxy */
-  try {
-    const tok      = await fetchRgToken();
-    const authOpts = { ...pxOpts, headers: { Authorization: 'Bearer ' + tok } };
-    for (const u of [sdUrl, hdUrl]) {
-      try {
-        const r = await fetch(PROXY(u), authOpts);
-        if (r.ok && ctOk(r)) { const b = await readVideo(r); if (b) return b; }
-      } catch {}
-    }
-  } catch {}
-
-  /* 4 — chunked Range download (beats per-request size limits) */
-  for (const px of DL_PROXIES.slice(1)) {
-    for (const u of [sdUrl, hdUrl]) {
-      try { return await fetchRgBlobChunked(u, px); } catch {}
-    }
-  }
-
-  /* 5 — MediaRecorder capture: play video in hidden element, record in real time */
-  for (const u of [sdUrl, hdUrl]) {
-    try { return await fetchRgBlobViaCapture(u, rgid); } catch (e) {
-      console.warn('[RG capture]', rgid, e.message);
-    }
-  }
+  /* 2 — all CORS proxies in parallel; take the first that succeeds */
+  const proxyJobs = DL_PROXIES.slice(1).flatMap(px =>
+    [sdUrl, hdUrl].map(u => {
+      const sig = AbortSignal.timeout ? AbortSignal.timeout(10_000) : undefined;
+      return tryFetch(px(u), { credentials: 'omit', ...(sig ? { signal: sig } : {}) })
+        .catch(() => null);
+    })
+  );
+  const winner = (await Promise.all(proxyJobs)).find(Boolean);
+  if (winner) return winner;
 
   throw new Error(`fetchRgBlob: all attempts failed for ${rgid}`);
 }
@@ -1788,29 +1705,33 @@ async function downloadSelected() {
     }
   }
 
-  /* Build a helper HTML file listing any Redgifs that couldn't be fetched automatically.
-     User opens it from the folder / ZIP and clicks the SD/HD links to save each video. */
-  function buildManualHtml(failedItems) {
-    const rows = failedItems.map(({ item, num }) => {
-      const id = item.rgid;
-      const hd = `https://media.redgifs.com/${id}.mp4`;
-      const sd = item.srcSd || `https://media.redgifs.com/${id}-mobile.mp4`;
-      return `<tr><td>${num}</td>` +
-        `<td><a href="${sd}" target="_blank">SD</a> &nbsp; <a href="${hd}" target="_blank">HD</a></td>` +
-        `<td style="font-size:.85em;color:#555">${id}</td></tr>`;
-    }).join('');
-    return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
-<title>Manual Downloads</title>
-<style>body{font-family:sans-serif;max-width:760px;margin:40px auto;padding:0 20px}
-.tip{background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:12px 16px;margin:16px 0}
-table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #eee}
-th{background:#f5f5f5}a{color:#0066cc}</style></head>
-<body><h2 style="margin-top:0">Videos that couldn't download automatically</h2>
-<div class="tip"><strong>How to save:</strong> Click <strong>SD</strong> or <strong>HD</strong> to open
-the video in a new tab, then right-click &rarr; <em>Save video as&hellip;</em></div>
-<table><thead><tr><th>#</th><th>Links</th><th>Redgifs ID</th></tr></thead>
-<tbody>${rows}</tbody></table></body></html>`;
-  }
+  /* shared download loop — fills zip (if provided) or saves to dir */
+  const failedRg = [];
+  let done = 0, failed = 0;
+
+  const runLoop = async (onSuccess) => {
+    for (const item of items) {
+      const num = String(done + 1).padStart(4, '0');
+      setProgress(`Downloading ${done + 1} / ${n}…`, '', done / n);
+      try {
+        let blob;
+        if (item.rgid) {
+          blob = await fetchRgBlob(item.rgid, item.srcSd);
+        } else {
+          blob = await fetchBlob(srcFor(item));
+        }
+        const url = item.src || item.preview || '';
+        if (item.cat === 'images' && blob.type.startsWith('image/')) blob = await stripExif(blob);
+        const ext  = item.cat === 'videos' ? 'mp4' : blobExt(blob, url);
+        await onSuccess(num, ext, blob);
+      } catch (e) {
+        console.error('[DL] skipped:', item.rgid || item.src || item.preview, e.message);
+        if (item.rgid) failedRg.push({ item, num });
+        failed++;
+      }
+      done++;
+    }
+  };
 
   if ('showDirectoryPicker' in window) {
     /* ── Folder picker (Chrome / Edge) ── */
@@ -1818,82 +1739,23 @@ the video in a new tab, then right-click &rarr; <em>Save video as&hellip;</em></
     try { dir = await window.showDirectoryPicker({ mode: 'readwrite' }); }
     catch { $('dl-btn').disabled = false; return; }
 
-    let done = 0, failed = 0;
-    const failedRg = [];
-    for (const item of items) {
-      const num = String(done + 1).padStart(4, '0');
-      setProgress(`Saving ${done + 1} / ${n}…`, '', done / n);
-      try {
-        let blob;
-        if (item.rgid) {
-          blob = await fetchRgBlob(item.rgid, item.srcSd);
-        } else {
-          blob = await fetchBlob(srcFor(item));
-        }
-        const url = item.src || item.preview || '';
-        if (item.cat === 'images' && blob.type.startsWith('image/')) blob = await stripExif(blob);
-        const ext  = item.cat === 'videos' ? (blob.type.includes('webm') ? 'webm' : 'mp4') : blobExt(blob, url);
-        const name = `${num}.${ext}`;
-        const fh   = await dir.getFileHandle(name, { create: true });
-        const wr   = await fh.createWritable();
-        await wr.write(blob);
-        await wr.close();
-      } catch (e) {
-        console.error('[Folder] skipped:', item.src || item.preview, e.message);
-        if (item.rgid) failedRg.push({ item, num });
-        failed++;
-      }
-      done++;
-    }
+    await runLoop(async (num, ext, blob) => {
+      const fh = await dir.getFileHandle(`${num}.${ext}`, { create: true });
+      const wr = await fh.createWritable();
+      await wr.write(blob);
+      await wr.close();
+    });
 
-    /* Save helper HTML for any Redgifs that failed */
-    if (failedRg.length) {
-      try {
-        const html = buildManualHtml(failedRg);
-        const fh   = await dir.getFileHandle('_DOWNLOAD_THESE.html', { create: true });
-        const wr   = await fh.createWritable();
-        await wr.write(new Blob([html], { type: 'text/html' }));
-        await wr.close();
-      } catch {}
-    }
-
-    const hint = failedRg.length
-      ? `${failedRg.length} video(s) need manual save — open _DOWNLOAD_THESE.html`
-      : failed ? `${failed} failed` : '';
+    const hint = failedRg.length ? `${failedRg.length} Redgifs video(s) — see new tab` : failed ? `${failed} failed` : '';
     setProgress(`Saved ${done - failed} / ${n} files`, hint, 1);
 
   } else {
     /* ── ZIP fallback (Firefox / Safari) ── */
     const zip = new JSZip();
-    let done = 0, failed = 0;
-    const failedRg = [];
-    for (const item of items) {
-      const num = String(done + 1).padStart(4, '0');
-      setProgress(`Packing ${done + 1} / ${n}…`, '', done / n);
-      try {
-        let blob;
-        if (item.rgid) {
-          blob = await fetchRgBlob(item.rgid, item.srcSd);
-        } else {
-          blob = await fetchBlob(srcFor(item));
-        }
-        const url = item.src || item.preview || '';
-        if (item.cat === 'images' && blob.type.startsWith('image/')) blob = await stripExif(blob);
-        const ext  = item.cat === 'videos' ? (blob.type.includes('webm') ? 'webm' : 'mp4') : blobExt(blob, url);
-        const name = `${num}.${ext}`;
-        zip.file(name, await blob.arrayBuffer());
-      } catch (e) {
-        console.error('[ZIP] skipped:', item.src || item.preview, e.message);
-        if (item.rgid) failedRg.push({ item, num });
-        failed++;
-      }
-      done++;
-    }
 
-    /* Add helper HTML to ZIP for any Redgifs that failed */
-    if (failedRg.length) {
-      zip.file('_DOWNLOAD_THESE.html', buildManualHtml(failedRg));
-    }
+    await runLoop(async (num, ext, blob) => {
+      zip.file(`${num}.${ext}`, await blob.arrayBuffer());
+    });
 
     setProgress('Building ZIP…', '', 0.99);
     const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
@@ -1906,10 +1768,22 @@ the video in a new tab, then right-click &rarr; <em>Save video as&hellip;</em></
     });
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 3000);
-    const hint = failedRg.length
-      ? `${failedRg.length} video(s) need manual save — open _DOWNLOAD_THESE.html from ZIP`
-      : failed ? `${failed} failed` : '';
+    const hint = failedRg.length ? `${failedRg.length} Redgifs video(s) — see new tab` : failed ? `${failed} failed` : '';
     setProgress(`Done — ${done - failed} files in ZIP`, hint, 1);
+  }
+
+  /* For any Redgifs that couldn't be fetched (CDN blocks cross-origin blob reads),
+     open a helper tab where each video is embedded and the user can right-click to save. */
+  if (failedRg.length) {
+    const opened = openRgSavePage(failedRg);
+    if (!opened) {
+      /* Popup was blocked — update the status message to tell the user */
+      setProgress(
+        `${done - failed} downloaded, ${failedRg.length} need manual save`,
+        'Popup blocked — allow popups and click Download again',
+        1
+      );
+    }
   }
 
   $('dl-btn').disabled = S.selected.size === 0;
