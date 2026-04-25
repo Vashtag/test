@@ -412,6 +412,20 @@
     }
     #profile-links a:hover { border-color: var(--blue); background: rgba(88,166,255,.14); }
 
+    #profile-alts {
+      margin-top: 8px;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+    #profile-alts .alt-label { margin-right: 6px; }
+    #profile-alts a {
+      color: #a78bfa;
+      text-decoration: none;
+      margin-right: 8px;
+      white-space: nowrap;
+    }
+    #profile-alts a:hover { text-decoration: underline; }
+
     /* ── Load More ──────────────────────────────────*/
     .load-more-row {
       display: flex;
@@ -660,6 +674,7 @@
       <div id="profile-name"></div>
       <div id="profile-bio"></div>
       <div id="profile-links" hidden></div>
+      <div id="profile-alts" hidden></div>
     </div>
   </div>
 </div>
@@ -926,7 +941,76 @@ async function fetchUserProfile(user) {
     }
 
     $('profile-card').removeAttribute('hidden');
+
+    /* Kick off alt-account search in the background — updates the card when done */
+    const allLinks = socialLinks.map(l => l.url)
+      .concat([...bio.matchAll(/https?:\/\/\S+/g)].map(m => m[0].replace(/[)>.,;'"]+$/, '')));
+    findAlts(user, allLinks);
+
   } catch { /* profile is optional — silently skip on error */ }
+}
+
+/* ── Alt-account finder ──────────────────────────── */
+async function findAlts(currentUser, links) {
+  const altsEl = $('profile-alts');
+  altsEl.hidden = true;
+
+  /* Extract usernames from known platform URLs */
+  const platformRe = [
+    /(?:redgifs\.com\/users?|onlyfans\.com|fansly\.com|manyvids\.com|patreon\.com|twitter\.com|x\.com|instagram\.com|tiktok\.com\/@?)\/([A-Za-z0-9_.\-]{2,})/i,
+    /linktr\.ee\/([A-Za-z0-9_.\-]{2,})/i,
+  ];
+  const candidates = new Set();
+  for (const url of links) {
+    for (const re of platformRe) {
+      const m = url.match(re);
+      if (m) candidates.add(m[1].replace(/^@/, '').toLowerCase());
+    }
+  }
+
+  const found = new Map(); /* username → profile URL */
+
+  /* 1 — Reddit name search for each extracted platform username */
+  await Promise.allSettled([...candidates].map(async q => {
+    try {
+      const r = await apiFetch(
+        `https://www.reddit.com/api/search_reddit_names.json?query=${encodeURIComponent(q)}&include_over_18=true&exact=false`
+      );
+      if (!r.ok) return;
+      const { names } = await r.json();
+      for (const n of (names || [])) {
+        if (n.toLowerCase() === currentUser.toLowerCase()) continue;
+        /* Only include if the name contains the query string (avoids unrelated matches) */
+        if (n.toLowerCase().includes(q) || q.includes(n.toLowerCase()))
+          found.set(n, `https://www.reddit.com/user/${encodeURIComponent(n)}/`);
+      }
+    } catch {}
+  }));
+
+  /* 2 — Reddit post search for each external link — find other authors who share it */
+  await Promise.allSettled(links.slice(0, 4).map(async url => {
+    try {
+      const r = await apiFetch(
+        `https://www.reddit.com/search.json?q=${encodeURIComponent(url)}&type=link&limit=25&sort=new`
+      );
+      if (!r.ok) return;
+      const { data } = await r.json();
+      for (const child of (data?.children || [])) {
+        const author = child.data?.author;
+        if (!author || author === '[deleted]' || author.toLowerCase() === currentUser.toLowerCase()) continue;
+        found.set(author, `https://www.reddit.com/user/${encodeURIComponent(author)}/`);
+      }
+    } catch {}
+  }));
+
+  if (!found.size) return;
+
+  altsEl.innerHTML =
+    `<span class="alt-label">Other accounts found:</span>` +
+    [...found.entries()].slice(0, 8).map(([name, url]) =>
+      `<a href="${htmlEsc(url)}" target="_blank" rel="noopener" referrerpolicy="no-referrer">u/${htmlEsc(name)}</a>`
+    ).join('');
+  altsEl.hidden = false;
 }
 
 /* ── Extraction ──────────────────────────────────── */
