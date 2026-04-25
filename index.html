@@ -1580,6 +1580,44 @@ async function fetchBlob(url) {
    Two-stage validation: fast content-type pre-check (before reading the body),
    then a minimum-size check on the resulting blob to rule out error stubs.
    Tries SD (smaller) before HD so proxy size limits are less likely to bite. */
+/* Download a URL in 1 MB Range-request chunks through a single proxy.
+   Bypasses per-request size limits that cut off large Redgifs videos. */
+async function fetchRgBlobChunked(url, proxyFn) {
+  const CHUNK = 1_048_576; /* 1 MiB per request */
+  const opts  = { credentials: 'omit', referrer: 'https://www.redgifs.com/', referrerPolicy: 'unsafe-url' };
+
+  /* Probe byte 0 to discover total size via Content-Range */
+  const probe = await fetch(proxyFn(url), { ...opts, headers: { Range: 'bytes=0-0' } });
+
+  /* 200 = server ignored Range header — read full body and return */
+  if (probe.ok && probe.status === 200) {
+    const b = await streamBlob(probe);
+    if (b.size >= 50_000) return b;
+    throw new Error('full response too small');
+  }
+
+  if (probe.status !== 206) throw new Error('probe: ' + probe.status);
+
+  const cr    = probe.headers.get('content-range') || '';
+  const total = parseInt(cr.split('/')[1] || '0', 10);
+  if (!total || total < 50_000) throw new Error('bad content-range: ' + cr);
+  try { await probe.arrayBuffer(); } catch {} /* drain probe body */
+
+  const parts = [];
+  for (let off = 0; off < total; off += CHUNK) {
+    const end = Math.min(off + CHUNK - 1, total - 1);
+    setProgress(
+      'Downloading…',
+      `${(off / 1e6).toFixed(1)} / ${(total / 1e6).toFixed(1)} MB`,
+      off / total
+    );
+    const r = await fetch(proxyFn(url), { ...opts, headers: { Range: `bytes=${off}-${end}` } });
+    if (r.status !== 206 && !r.ok) throw new Error('chunk ' + r.status);
+    parts.push(await r.arrayBuffer());
+  }
+  return new Blob(parts, { type: 'video/mp4' });
+}
+
 async function fetchRgBlob(rgid, srcSd) {
   const hdUrl = `https://media.redgifs.com/${rgid}.mp4`;
   const sdUrl = srcSd || `https://media.redgifs.com/${rgid}-mobile.mp4`;
@@ -1624,6 +1662,13 @@ async function fetchRgBlob(rgid, srcSd) {
       if (r.ok && ctOk(r)) { const b = await readVideo(r); if (b) return b; }
     }
   } catch {}
+
+  /* 4 — chunked Range download: fetches 1 MB at a time to beat proxy size caps */
+  for (const px of DL_PROXIES.slice(1)) {
+    for (const u of [sdUrl, hdUrl]) {
+      try { return await fetchRgBlobChunked(u, px); } catch {}
+    }
+  }
 
   throw new Error(`fetchRgBlob: all attempts failed for ${rgid}`);
 }
