@@ -1580,17 +1580,29 @@ async function fetchBlob(url) {
    The browser loads them fine (no CORS needed for <video> src) and the user
    can right-click each one to "Save video as…". */
 function openRgSavePage(failedItems) {
+  /* Proxy list and download logic embedded in the helper page so it can
+     fetch+save without relying on the user right-clicking. */
+  const proxies = JSON.stringify([
+    'https://corsproxy.io/?',
+    'https://api.codetabs.com/v1/proxy?quest=',
+    'https://api.allorigins.win/raw?url=',
+  ]);
+
   const cards = failedItems.map(({ item, num }) => {
     const id     = item.rgid;
-    const sd     = item.srcSd || `https://media.redgifs.com/${id}-mobile.mp4`;
+    const sd     = (item.srcSd || `https://media.redgifs.com/${id}-mobile.mp4`).replace(/"/g, '&quot;');
     const hd     = `https://media.redgifs.com/${id}.mp4`;
     const poster = (item.poster || item.preview || '').replace(/"/g, '&quot;');
-    return `<div class="card">
+    return `<div class="card" id="c${num}">
   <div class="lbl">#${num}</div>
-  <video src="${sd.replace(/"/g, '&quot;')}" ${poster ? `poster="${poster}"` : ''}
+  <video src="${sd}" ${poster ? `poster="${poster}"` : ''}
     controls preload="metadata" onerror="this.src='${hd.replace(/"/g, '&quot;')}'"
-    style="width:100%;border-radius:6px;display:block;max-height:380px;background:#000;object-fit:contain"></video>
-  <div class="hint">Right-click &rarr; <strong>Save video as&hellip;</strong></div>
+    style="width:100%;border-radius:6px;display:block;max-height:340px;background:#000;object-fit:contain"></video>
+  <div class="row">
+    <button onclick="dl('${id}','${sd}','${hd}','${num}')">&#8659; Download MP4</button>
+    <a href="https://www.redgifs.com/watch/${id}" target="_blank" class="watch">Open on Redgifs ↗</a>
+  </div>
+  <div class="status" id="s${num}"></div>
 </div>`;
   }).join('\n');
 
@@ -1605,16 +1617,57 @@ h2{margin:0 0 8px;font-size:1.15rem}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
 .card{background:#1c1c1c;border-radius:10px;padding:12px}
 .lbl{font-size:.78rem;color:#777;margin-bottom:6px}
-.hint{margin-top:7px;font-size:.82rem;color:#aaa}
-.hint strong{color:#fbbf24}
+.row{display:flex;align-items:center;gap:10px;margin-top:8px}
+button{background:#f59e0b;color:#000;border:none;border-radius:6px;padding:7px 14px;font-size:.88rem;font-weight:600;cursor:pointer}
+button:hover{background:#fbbf24}
+button:disabled{background:#555;color:#888;cursor:default}
+.watch{font-size:.82rem;color:#aaa;text-decoration:none}
+.watch:hover{color:#ddd}
+.status{font-size:.8rem;margin-top:5px;min-height:1.2em;color:#aaa}
+.ok{color:#4ade80}.err{color:#f87171}
 </style></head>
 <body>
 <h2>Videos that couldn't be fetched automatically (${failedItems.length})</h2>
 <div class="banner">
-  <strong>How to save:</strong> right-click any video below and choose
-  <strong>"Save video as…"</strong> — or tap the ⋮ / download icon inside the player.
+  Click <strong>Download MP4</strong> — the page will try several proxies and save the file directly.<br>
+  If that fails, click <strong>Open on Redgifs</strong> and use the download button there.
 </div>
 <div class="grid">${cards}</div>
+<script>
+const PROXIES = ${proxies};
+async function dl(id, sd, hd, num) {
+  const btn = document.querySelector('#c'+num+' button');
+  const st  = document.getElementById('s'+num);
+  btn.disabled = true;
+  for (const url of [sd, hd]) {
+    for (const px of PROXIES) {
+      st.textContent = 'Trying ' + new URL(px.endsWith('=') ? px + encodeURIComponent(url) : px + encodeURIComponent(url)).hostname + '…';
+      try {
+        const sig = AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined;
+        const r = await fetch(px + encodeURIComponent(url), {
+          credentials: 'omit',
+          headers: { Range: 'bytes=0-' },
+          ...(sig ? { signal: sig } : {})
+        });
+        if (!r.ok && r.status !== 206) continue;
+        const ct = (r.headers.get('content-type') || '').toLowerCase();
+        if (ct.includes('xml') || ct.startsWith('text/') || ct.includes('json') || ct.startsWith('image/')) continue;
+        const blob = await r.blob();
+        if (blob.size < 50000) continue;
+        const a = Object.assign(document.createElement('a'), {
+          href: URL.createObjectURL(blob), download: id + '.mp4'
+        });
+        document.body.appendChild(a); a.click();
+        setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+        st.className = 'status ok'; st.textContent = 'Saved ' + (blob.size/1e6).toFixed(1) + ' MB ✓';
+        btn.disabled = false; return;
+      } catch {}
+    }
+  }
+  st.className = 'status err'; st.textContent = 'Proxy fetch failed — use "Open on Redgifs" link above';
+  btn.disabled = false;
+}
+</script>
 </body></html>`;
 
   const blobUrl = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
@@ -1627,28 +1680,31 @@ async function fetchRgBlob(rgid, srcSd) {
   const hdUrl = `https://media.redgifs.com/${rgid}.mp4`;
   const sdUrl = srcSd || `https://media.redgifs.com/${rgid}-mobile.mp4`;
 
-  const tryFetch = async (url, opts) => {
+  /* Without Range header the CDN returns a DASH/XML manifest instead of MP4.
+     Sending Range: bytes=0- triggers actual video byte delivery. */
+  const tryFetch = async (url, signal) => {
+    const opts = { credentials: 'omit', headers: { Range: 'bytes=0-' } };
+    if (signal) opts.signal = signal;
     const r = await fetch(url, opts);
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    if (!r.ok && r.status !== 206) throw new Error(`HTTP ${r.status}`);
     const ct = (r.headers.get('content-type') || '').toLowerCase();
-    if (ct.startsWith('image/') || ct.startsWith('text/') || ct === 'application/json')
+    if (ct.includes('xml') || ct.startsWith('text/') || ct === 'application/json' || ct.startsWith('image/'))
       throw new Error(`bad content-type: ${ct}`);
     const b = await streamBlob(r);
     if (b.size < 50_000) throw new Error(`too small: ${b.size}`);
     return b;
   };
 
-  /* 1 — direct (CORS will reject, but try once in case CDN ever adds ACAO) */
+  /* 1 — direct with Range (CORS will reject, but covers edge cases) */
   for (const u of [sdUrl, hdUrl]) {
-    try { return await tryFetch(u, { credentials: 'omit' }); } catch {}
+    try { return await tryFetch(u); } catch {}
   }
 
-  /* 2 — all CORS proxies in parallel; take the first that succeeds */
+  /* 2 — all CORS proxies in parallel with Range header */
   const proxyJobs = DL_PROXIES.slice(1).flatMap(px =>
     [sdUrl, hdUrl].map(u => {
       const sig = AbortSignal.timeout ? AbortSignal.timeout(10_000) : undefined;
-      return tryFetch(px(u), { credentials: 'omit', ...(sig ? { signal: sig } : {}) })
-        .catch(() => null);
+      return tryFetch(px(u), sig).catch(() => null);
     })
   );
   const winner = (await Promise.all(proxyJobs)).find(Boolean);
