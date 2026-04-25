@@ -83,6 +83,28 @@
     .mode-btn.active { background: var(--accent); color: #fff; }
     .mode-btn.active:hover:not(:disabled) { background: var(--accentH); }
 
+    /* ── Sort dropdowns ──────────────────────────────── */
+    .sort-select {
+      padding: 8px 28px 8px 12px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      outline: none;
+      -webkit-appearance: none;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath fill='%238b949e' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 9px center;
+      transition: border-color .15s;
+      flex-shrink: 0;
+    }
+    .sort-select:hover, .sort-select:focus { border-color: var(--accent); }
+    .sort-select option { background: var(--surface); color: var(--text); }
+
     input[type="text"] {
       flex: 1;
       padding: 9px 14px;
@@ -667,11 +689,21 @@
         <button id="mode-sub"  class="mode-btn">r/</button>
         <button id="mode-tw"   class="mode-btn">𝕏</button>
       </div>
-      <div id="sort-row" class="mode-toggle" hidden>
-        <button class="sort-btn mode-btn active" data-sort="hot">Hot</button>
-        <button class="sort-btn mode-btn" data-sort="top">Top</button>
-        <button class="sort-btn mode-btn" data-sort="new">New</button>
-        <button class="sort-btn mode-btn" data-sort="rising">Rising</button>
+      <div id="sort-row" style="display:flex;gap:6px;" hidden>
+        <select id="sort-select" class="sort-select">
+          <option value="hot">Hot</option>
+          <option value="top">Top</option>
+          <option value="new">New</option>
+          <option value="rising">Rising</option>
+        </select>
+        <select id="time-select" class="sort-select" hidden>
+          <option value="hour">Past hour</option>
+          <option value="day">Past 24 hours</option>
+          <option value="week" selected>Past week</option>
+          <option value="month">Past month</option>
+          <option value="year">Past year</option>
+          <option value="all">All time</option>
+        </select>
       </div>
       <input type="text" id="username" placeholder="Reddit username (e.g. spez)" autocomplete="off" spellcheck="false" />
 <button id="scrape-btn">Scrape</button>
@@ -807,7 +839,8 @@ let S = mkState();
 let _rgToken = null, _rgTokenTs = 0;
 let _useProxy = false;
 let _mode = 'user'; /* 'user' | 'subreddit' | 'twitter' */
-let _sort = 'hot';  /* subreddit sort: hot | top | new | rising */
+let _sort = 'hot';     /* subreddit sort: hot | top | new | rising */
+let _topTime = 'week'; /* subreddit top time: hour | day | week | month | year | all */
 
 const TW_BEARER = 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I7BeIg1ezFo%3DI4dKyd4wW2iEObgTqheqfyHVoTDlRsOGozH1CRjnkuFJ1Ra0Nz';
 let _twGuestToken = null, _twGuestTokenTs = 0;
@@ -1139,7 +1172,7 @@ async function fetchAllPosts() {
     page++;
     setProgress('Collecting posts…', `Page ${page} · ${total()} items`, null);
 
-    const timeParam = (isSub && _sort === 'top') ? '&t=all' : '';
+    const timeParam = (isSub && _sort === 'top') ? `&t=${_topTime}` : '';
     const qs  = `limit=${CFG.pageLimit}&raw_json=1${after ? '&after=' + after : ''}${timeParam}`;
     const url = `${baseUrl}?${qs}`;
     const res = await apiFetch(url);
@@ -2199,12 +2232,13 @@ function setMode(m) {
 $('mode-user').addEventListener('click', () => setMode('user'));
 $('mode-sub').addEventListener('click', () => setMode('subreddit'));
 $('mode-tw').addEventListener('click', () => setMode('twitter'));
-/* ── Sort toggle (subreddit mode only) ───────────── */
-document.querySelectorAll('.sort-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    _sort = btn.dataset.sort;
-    document.querySelectorAll('.sort-btn').forEach(b => b.classList.toggle('active', b === btn));
-  });
+/* ── Sort dropdowns (subreddit mode only) ────────── */
+$('sort-select').addEventListener('change', () => {
+  _sort = $('sort-select').value;
+  $('time-select').hidden = _sort !== 'top';
+});
+$('time-select').addEventListener('change', () => {
+  _topTime = $('time-select').value;
 });
 
 
