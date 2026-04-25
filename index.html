@@ -412,6 +412,20 @@
     }
     #profile-links a:hover { border-color: var(--blue); background: rgba(88,166,255,.14); }
 
+    #find-alts-btn {
+      flex-shrink: 0;
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.75rem;
+      padding: 3px 9px;
+      border-radius: 4px;
+      white-space: nowrap;
+      margin-top: 2px;
+    }
+    #find-alts-btn:hover:not(:disabled) { border-color: #a78bfa; color: #a78bfa; }
+    #find-alts-btn:disabled { opacity: .5; cursor: default; }
+
     #profile-alts {
       margin-top: 8px;
       font-size: 0.8rem;
@@ -672,7 +686,10 @@
     <img id="profile-avatar" referrerpolicy="no-referrer" alt="" />
     <div class="profile-info">
       <div id="profile-name"></div>
-      <div id="profile-bio"></div>
+      <div id="profile-bio-row" style="display:flex;align-items:flex-start;gap:8px;">
+        <div id="profile-bio" style="flex:1"></div>
+        <button id="find-alts-btn" hidden title="Search for other Reddit accounts sharing the same bio links">Find alts</button>
+      </div>
       <div id="profile-links" hidden></div>
       <div id="profile-alts" hidden></div>
     </div>
@@ -942,10 +959,22 @@ async function fetchUserProfile(user) {
 
     $('profile-card').removeAttribute('hidden');
 
-    /* Kick off alt-account search in the background — updates the card when done */
     const allLinks = socialLinks.map(l => l.url)
       .concat([...bio.matchAll(/https?:\/\/\S+/g)].map(m => m[0].replace(/[)>.,;'"]+$/, '')));
-    findAlts(user, allLinks);
+
+    const altBtn = $('find-alts-btn');
+    altBtn.hidden = (allLinks.length === 0);
+    altBtn.disabled = false;
+    altBtn.textContent = 'Find alts';
+    /* Replace listener to bind fresh user/links on each scrape */
+    const newBtn = altBtn.cloneNode(true);
+    altBtn.replaceWith(newBtn);
+    newBtn.addEventListener('click', async () => {
+      newBtn.disabled = true;
+      newBtn.textContent = 'Searching…';
+      await findAlts(user, allLinks);
+      newBtn.hidden = true;
+    });
 
   } catch { /* profile is optional — silently skip on error */ }
 }
@@ -953,7 +982,8 @@ async function fetchUserProfile(user) {
 /* ── Alt-account finder ──────────────────────────── */
 async function findAlts(currentUser, links) {
   const altsEl = $('profile-alts');
-  altsEl.hidden = true;
+  altsEl.hidden  = true;
+  altsEl.innerHTML = '';
 
   /* Extract usernames from known platform URLs */
   const platformRe = [
