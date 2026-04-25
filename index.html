@@ -1995,7 +1995,7 @@ document.querySelectorAll('.sort-btn').forEach(btn => {
 });
 
 
-$('new-search-btn').addEventListener('click', () => window.open(location.href, '_blank'));
+$('new-search-btn').addEventListener('click', () => window.open(location.origin + location.pathname, '_blank'));
 
 /* ── Entry point ─────────────────────────────────── */
 scrapeBtn.addEventListener('click', startScrape);
