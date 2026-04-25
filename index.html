@@ -1576,20 +1576,14 @@ async function fetchBlob(url) {
   throw new Error(errors[0] || 'fetch failed');
 }
 
-/* Fetch a Redgifs MP4.
-   Two-stage validation: fast content-type pre-check (before reading the body),
-   then a minimum-size check on the resulting blob to rule out error stubs.
-   Tries SD (smaller) before HD so proxy size limits are less likely to bite. */
-/* Download a URL in 1 MB Range-request chunks through a single proxy.
-   Bypasses per-request size limits that cut off large Redgifs videos. */
+/* Download a Redgifs URL in 1 MB Range-request chunks through a single proxy.
+   Uses plain credentials:omit — no spoofed Referer, which confuses some proxies. */
 async function fetchRgBlobChunked(url, proxyFn) {
-  const CHUNK = 1_048_576; /* 1 MiB per request */
-  const opts  = { credentials: 'omit', referrer: 'https://www.redgifs.com/', referrerPolicy: 'unsafe-url' };
+  const CHUNK    = 1_048_576;
+  const pxOpts   = { credentials: 'omit' };
 
-  /* Probe byte 0 to discover total size via Content-Range */
-  const probe = await fetch(proxyFn(url), { ...opts, headers: { Range: 'bytes=0-0' } });
+  const probe = await fetch(proxyFn(url), { ...pxOpts, headers: { Range: 'bytes=0-0' } });
 
-  /* 200 = server ignored Range header — read full body and return */
   if (probe.ok && probe.status === 200) {
     const b = await streamBlob(probe);
     if (b.size >= 50_000) return b;
@@ -1601,72 +1595,145 @@ async function fetchRgBlobChunked(url, proxyFn) {
   const cr    = probe.headers.get('content-range') || '';
   const total = parseInt(cr.split('/')[1] || '0', 10);
   if (!total || total < 50_000) throw new Error('bad content-range: ' + cr);
-  try { await probe.arrayBuffer(); } catch {} /* drain probe body */
+  try { await probe.arrayBuffer(); } catch {}
 
   const parts = [];
   for (let off = 0; off < total; off += CHUNK) {
     const end = Math.min(off + CHUNK - 1, total - 1);
-    setProgress(
-      'Downloading…',
-      `${(off / 1e6).toFixed(1)} / ${(total / 1e6).toFixed(1)} MB`,
-      off / total
-    );
-    const r = await fetch(proxyFn(url), { ...opts, headers: { Range: `bytes=${off}-${end}` } });
+    setProgress('Downloading…', `${(off/1e6).toFixed(1)} / ${(total/1e6).toFixed(1)} MB`, off / total);
+    const r = await fetch(proxyFn(url), { ...pxOpts, headers: { Range: `bytes=${off}-${end}` } });
     if (r.status !== 206 && !r.ok) throw new Error('chunk ' + r.status);
     parts.push(await r.arrayBuffer());
   }
   return new Blob(parts, { type: 'video/mp4' });
 }
 
-async function fetchRgBlob(rgid, srcSd) {
-  const hdUrl = `https://media.redgifs.com/${rgid}.mp4`;
-  const sdUrl = srcSd || `https://media.redgifs.com/${rgid}-mobile.mp4`;
-  const rgOpts = { credentials: 'omit', referrer: 'https://www.redgifs.com/', referrerPolicy: 'unsafe-url' };
+/* Record a video by playing it in a hidden element and capturing via MediaRecorder.
+   Works for any URL the browser can load as <video> — no CORS needed for playback. */
+function fetchRgBlobViaCapture(url, rgid) {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    video.muted       = true;
+    video.playsInline = true;
+    video.style.cssText = 'position:fixed;width:2px;height:2px;top:0;left:0;opacity:0.01;pointer-events:none;';
+    document.body.appendChild(video);
 
-  /* Pre-check content-type without reading the body; returns null to skip */
+    let recorder, done = false;
+    const finish = (blob, err) => {
+      if (done) return; done = true;
+      clearTimeout(guard);
+      try { video.pause(); video.src = ''; video.remove(); } catch {}
+      try { if (recorder && recorder.state !== 'inactive') recorder.stop(); } catch {}
+      err ? reject(err) : resolve(blob);
+    };
+
+    /* Hard cap: duration*1.2 + 10 s, minimum 30 s */
+    let guard = setTimeout(() => finish(null, new Error('capture timeout')), 30_000);
+
+    video.addEventListener('error', () =>
+      finish(null, new Error('video error: ' + (video.error?.message || 'load failed'))));
+
+    video.addEventListener('loadedmetadata', () => {
+      const dur = isFinite(video.duration) && video.duration > 0 ? video.duration : 120;
+      clearTimeout(guard);
+      guard = setTimeout(() => finish(null, new Error('capture timeout')), dur * 1200 + 10_000);
+
+      try {
+        const captureFn = video.captureStream || video.mozCaptureStream;
+        if (!captureFn) throw new Error('captureStream not supported');
+        const stream   = captureFn.call(video);
+        const mimeType = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
+          .find(t => { try { return MediaRecorder.isTypeSupported(t); } catch { return false; } })
+          || 'video/webm';
+
+        recorder = new MediaRecorder(stream, { mimeType });
+        const chunks = [];
+        recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+        recorder.onstop = () => {
+          const blob = new Blob(chunks, { type: recorder.mimeType });
+          finish(blob.size >= 50_000 ? blob : null,
+                 blob.size < 50_000 ? new Error('recorded blob too small: ' + blob.size) : null);
+        };
+        recorder.onerror = e => finish(null, new Error('recorder: ' + e.error));
+
+        recorder.start(500);
+
+        const ticker = setInterval(() => {
+          if (!document.contains(video)) { clearInterval(ticker); return; }
+          setProgress('Recording video…',
+            `${video.currentTime.toFixed(1)} / ${dur.toFixed(1)} s`,
+            video.currentTime / dur);
+        }, 500);
+
+        video.addEventListener('ended', () => {
+          clearInterval(ticker);
+          if (recorder.state === 'recording') recorder.stop();
+        });
+
+        video.play().catch(e => finish(null, e));
+      } catch (e) { finish(null, e); }
+    });
+
+    video.src = url;
+  });
+}
+
+async function fetchRgBlob(rgid, srcSd) {
+  const hdUrl  = `https://media.redgifs.com/${rgid}.mp4`;
+  const sdUrl  = srcSd || `https://media.redgifs.com/${rgid}-mobile.mp4`;
+  /* Only used for direct (non-proxy) fetches where the Referer may help */
+  const direct = { credentials: 'omit', referrer: 'https://www.redgifs.com/', referrerPolicy: 'unsafe-url' };
+  /* Proxy fetches: no Referer spoofing — a fake Referer to corsproxy.io causes mismatches */
+  const pxOpts = { credentials: 'omit' };
+
   const ctOk = r => {
     const ct = (r.headers.get('content-type') || '').toLowerCase();
-    /* Reject known-bad types immediately; accept video/*, octet-stream, or unknown */
     return !ct.startsWith('image/') && !ct.startsWith('text/') && ct !== 'application/json';
   };
-
-  /* Read body and confirm it's actually large enough to be a video (≥ 50 KB) */
   const readVideo = async r => {
     const blob = await streamBlob(r);
     return blob.size >= 50_000 ? blob : null;
   };
 
-  /* Try SD first (smaller file, proxy-friendlier), then HD */
   for (const u of [sdUrl, hdUrl]) {
-    /* 1 — direct */
+    /* 1 — direct (CORS will fail, but worth one try in case CDN adds ACAO) */
     try {
-      const r = await fetch(u, rgOpts);
+      const r = await fetch(u, direct);
       if (r.ok && ctOk(r)) { const b = await readVideo(r); if (b) return b; }
     } catch {}
 
-    /* 2 — CORS proxies with spoofed Referer */
+    /* 2 — CORS proxies, plain opts (no spoofed Referer) */
     for (const px of DL_PROXIES.slice(1)) {
       try {
-        const r = await fetch(px(u), rgOpts);
+        const r = await fetch(px(u), pxOpts);
         if (r.ok && ctOk(r)) { const b = await readVideo(r); if (b) return b; }
       } catch {}
     }
   }
 
-  /* 3 — auth token via proxy (last resort) */
+  /* 3 — auth token via proxy */
   try {
     const tok      = await fetchRgToken();
-    const authOpts = { ...rgOpts, headers: { Authorization: 'Bearer ' + tok } };
+    const authOpts = { ...pxOpts, headers: { Authorization: 'Bearer ' + tok } };
     for (const u of [sdUrl, hdUrl]) {
-      const r = await fetch(PROXY(u), authOpts);
-      if (r.ok && ctOk(r)) { const b = await readVideo(r); if (b) return b; }
+      try {
+        const r = await fetch(PROXY(u), authOpts);
+        if (r.ok && ctOk(r)) { const b = await readVideo(r); if (b) return b; }
+      } catch {}
     }
   } catch {}
 
-  /* 4 — chunked Range download: fetches 1 MB at a time to beat proxy size caps */
+  /* 4 — chunked Range download (beats per-request size limits) */
   for (const px of DL_PROXIES.slice(1)) {
     for (const u of [sdUrl, hdUrl]) {
       try { return await fetchRgBlobChunked(u, px); } catch {}
+    }
+  }
+
+  /* 5 — MediaRecorder capture: play video in hidden element, record in real time */
+  for (const u of [sdUrl, hdUrl]) {
+    try { return await fetchRgBlobViaCapture(u, rgid); } catch (e) {
+      console.warn('[RG capture]', rgid, e.message);
     }
   }
 
@@ -1721,14 +1788,40 @@ async function downloadSelected() {
     }
   }
 
+  /* Build a helper HTML file listing any Redgifs that couldn't be fetched automatically.
+     User opens it from the folder / ZIP and clicks the SD/HD links to save each video. */
+  function buildManualHtml(failedItems) {
+    const rows = failedItems.map(({ item, num }) => {
+      const id = item.rgid;
+      const hd = `https://media.redgifs.com/${id}.mp4`;
+      const sd = item.srcSd || `https://media.redgifs.com/${id}-mobile.mp4`;
+      return `<tr><td>${num}</td>` +
+        `<td><a href="${sd}" target="_blank">SD</a> &nbsp; <a href="${hd}" target="_blank">HD</a></td>` +
+        `<td style="font-size:.85em;color:#555">${id}</td></tr>`;
+    }).join('');
+    return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<title>Manual Downloads</title>
+<style>body{font-family:sans-serif;max-width:760px;margin:40px auto;padding:0 20px}
+.tip{background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:12px 16px;margin:16px 0}
+table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #eee}
+th{background:#f5f5f5}a{color:#0066cc}</style></head>
+<body><h2 style="margin-top:0">Videos that couldn't download automatically</h2>
+<div class="tip"><strong>How to save:</strong> Click <strong>SD</strong> or <strong>HD</strong> to open
+the video in a new tab, then right-click &rarr; <em>Save video as&hellip;</em></div>
+<table><thead><tr><th>#</th><th>Links</th><th>Redgifs ID</th></tr></thead>
+<tbody>${rows}</tbody></table></body></html>`;
+  }
+
   if ('showDirectoryPicker' in window) {
     /* ── Folder picker (Chrome / Edge) ── */
     let dir;
     try { dir = await window.showDirectoryPicker({ mode: 'readwrite' }); }
-    catch { $('dl-btn').disabled = false; return; } /* user cancelled */
+    catch { $('dl-btn').disabled = false; return; }
 
     let done = 0, failed = 0;
+    const failedRg = [];
     for (const item of items) {
+      const num = String(done + 1).padStart(4, '0');
       setProgress(`Saving ${done + 1} / ${n}…`, '', done / n);
       try {
         let blob;
@@ -1739,26 +1832,43 @@ async function downloadSelected() {
         }
         const url = item.src || item.preview || '';
         if (item.cat === 'images' && blob.type.startsWith('image/')) blob = await stripExif(blob);
-        /* Videos must always save as .mp4 — never let a mistyped blob become .jpg */
-        const ext  = item.cat === 'videos' ? 'mp4' : blobExt(blob, url);
-        const name = `${String(done + 1).padStart(4, '0')}.${ext}`;
+        const ext  = item.cat === 'videos' ? (blob.type.includes('webm') ? 'webm' : 'mp4') : blobExt(blob, url);
+        const name = `${num}.${ext}`;
         const fh   = await dir.getFileHandle(name, { create: true });
         const wr   = await fh.createWritable();
         await wr.write(blob);
         await wr.close();
       } catch (e) {
         console.error('[Folder] skipped:', item.src || item.preview, e.message);
+        if (item.rgid) failedRg.push({ item, num });
         failed++;
       }
       done++;
     }
-    setProgress(`Saved ${done - failed} / ${n} files`, failed ? `${failed} failed (CDN blocked)` : '', 1);
+
+    /* Save helper HTML for any Redgifs that failed */
+    if (failedRg.length) {
+      try {
+        const html = buildManualHtml(failedRg);
+        const fh   = await dir.getFileHandle('_DOWNLOAD_THESE.html', { create: true });
+        const wr   = await fh.createWritable();
+        await wr.write(new Blob([html], { type: 'text/html' }));
+        await wr.close();
+      } catch {}
+    }
+
+    const hint = failedRg.length
+      ? `${failedRg.length} video(s) need manual save — open _DOWNLOAD_THESE.html`
+      : failed ? `${failed} failed` : '';
+    setProgress(`Saved ${done - failed} / ${n} files`, hint, 1);
 
   } else {
     /* ── ZIP fallback (Firefox / Safari) ── */
     const zip = new JSZip();
     let done = 0, failed = 0;
+    const failedRg = [];
     for (const item of items) {
+      const num = String(done + 1).padStart(4, '0');
       setProgress(`Packing ${done + 1} / ${n}…`, '', done / n);
       try {
         let blob;
@@ -1769,16 +1879,22 @@ async function downloadSelected() {
         }
         const url = item.src || item.preview || '';
         if (item.cat === 'images' && blob.type.startsWith('image/')) blob = await stripExif(blob);
-        /* Videos must always save as .mp4 — never let a mistyped blob become .jpg */
-        const ext  = item.cat === 'videos' ? 'mp4' : blobExt(blob, url);
-        const name = `${String(done + 1).padStart(4, '0')}.${ext}`;
+        const ext  = item.cat === 'videos' ? (blob.type.includes('webm') ? 'webm' : 'mp4') : blobExt(blob, url);
+        const name = `${num}.${ext}`;
         zip.file(name, await blob.arrayBuffer());
       } catch (e) {
         console.error('[ZIP] skipped:', item.src || item.preview, e.message);
+        if (item.rgid) failedRg.push({ item, num });
         failed++;
       }
       done++;
     }
+
+    /* Add helper HTML to ZIP for any Redgifs that failed */
+    if (failedRg.length) {
+      zip.file('_DOWNLOAD_THESE.html', buildManualHtml(failedRg));
+    }
+
     setProgress('Building ZIP…', '', 0.99);
     const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
     const hasVid = items.some(i => i.cat === 'videos');
@@ -1790,7 +1906,10 @@ async function downloadSelected() {
     });
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 3000);
-    setProgress(`Done — ${done - failed} files in ZIP`, failed ? `${failed} failed (CDN blocked)` : '', 1);
+    const hint = failedRg.length
+      ? `${failedRg.length} video(s) need manual save — open _DOWNLOAD_THESE.html from ZIP`
+      : failed ? `${failed} failed` : '';
+    setProgress(`Done — ${done - failed} files in ZIP`, hint, 1);
   }
 
   $('dl-btn').disabled = S.selected.size === 0;
