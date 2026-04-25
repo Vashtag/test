@@ -338,16 +338,6 @@
     #new-search-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 
     /* ── Deleted toggle ─────────────────────────── */
-    #deleted-btn {
-      background: none;
-      border: 1px solid var(--border);
-      color: var(--muted);
-      font-size: 0.88rem;
-      white-space: nowrap;
-    }
-    #deleted-btn:hover:not(:disabled) { border-color: #a78bfa; color: #a78bfa; }
-    #deleted-btn.active { border-color: #a78bfa; color: #a78bfa; background: rgba(167,139,250,.12); }
-
     /* ── Select button in header ─────────────────── */
     #select-btn {
       background: none;
@@ -656,8 +646,7 @@
       </div>
       <input type="text" id="username" placeholder="Reddit username (e.g. spez)" autocomplete="off" spellcheck="false" />
 <button id="scrape-btn">Scrape</button>
-      <button id="deleted-btn" title="Also search archived copies of deleted posts">+ Deleted</button>
-      <button id="select-btn" hidden>Select</button>
+<button id="select-btn" hidden>Select</button>
     </div>
     <button id="new-search-btn">+ New Search</button>
   </div>
@@ -785,7 +774,6 @@ let _rgToken = null, _rgTokenTs = 0;
 let _useProxy = false;
 let _mode = 'user'; /* 'user' | 'subreddit' */
 let _sort = 'hot';  /* subreddit sort: hot | top | new | rising */
-let _includeDeleted = false;
 
 /* ── Fetch with CORS-proxy fallback ──────────────── */
 const PROXY = u => 'https://corsproxy.io/?' + encodeURIComponent(u);
@@ -1970,7 +1958,6 @@ $('mode-user').addEventListener('click', () => {
   $('mode-user').classList.add('active');
   $('mode-sub').classList.remove('active');
   $('sort-row').setAttribute('hidden', '');
-  $('deleted-btn').style.display = '';
   usernameEl.placeholder = 'Reddit username (e.g. spez)';
 });
 $('mode-sub').addEventListener('click', () => {
@@ -1978,14 +1965,8 @@ $('mode-sub').addEventListener('click', () => {
   $('mode-sub').classList.add('active');
   $('mode-user').classList.remove('active');
   $('sort-row').removeAttribute('hidden');
-  $('deleted-btn').style.display = 'none';
   usernameEl.placeholder = 'Subreddit name (e.g. pics)';
 });
-$('deleted-btn').addEventListener('click', () => {
-  _includeDeleted = !_includeDeleted;
-  $('deleted-btn').classList.toggle('active', _includeDeleted);
-});
-
 /* ── Sort toggle (subreddit mode only) ───────────── */
 document.querySelectorAll('.sort-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -2035,7 +2016,7 @@ async function startScrape() {
     if (_mode === 'user') fetchUserProfile(S.user); /* fire-and-forget */
     await fetchAllPosts();
 
-    if (_includeDeleted && _mode === 'user') {
+    if (_mode === 'user') {
       await fetchArchivedPosts();
     }
 
@@ -2128,7 +2109,6 @@ async function searchSubs(q) {
         $('mode-sub').classList.add('active');
         $('mode-user').classList.remove('active');
         $('sort-row').removeAttribute('hidden');
-        $('deleted-btn').style.display = 'none';
         usernameEl.placeholder = 'Subreddit name (e.g. pics)';
         usernameEl.value = s.display_name;
         setFinderOpen(false);
