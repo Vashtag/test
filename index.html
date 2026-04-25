@@ -1186,6 +1186,7 @@ async function fetchAllPosts() {
     for (const p of posts) {
       S.seenIds.add(p.data.id);
       for (const item of extractPost(p.data)) {
+        item.subreddit = p.data.subreddit || '';
         S.items[item.cat].push(item);
         batch[item.cat].push(item);
         if (item.rgid) S.rgQueue.push(item);
@@ -1239,7 +1240,8 @@ async function fetchArchivedPosts() {
       if (S.seenIds.has(d.id)) continue; /* already in results */
       S.seenIds.add(d.id);
       for (const item of extractPost(d)) {
-        item.archived = true;
+        item.archived   = true;
+        item.subreddit  = d.subreddit || '';
         S.items[item.cat].push(item);
         batch[item.cat].push(item);
         if (item.rgid) S.rgQueue.push(item);
@@ -1490,6 +1492,18 @@ function buildCard(item) {
   }
 
   /* Username badge — same style as the count badge, top-left */
+  if (_mode === 'user' && item.subreddit) {
+    const sb = document.createElement('span');
+    sb.className   = 'author-badge';
+    sb.style.cssText = 'top:auto;bottom:6px;';
+    sb.textContent = `r/${item.subreddit}`;
+    sb.addEventListener('click', e => {
+      e.stopPropagation();
+      window.open(`https://www.reddit.com/r/${encodeURIComponent(item.subreddit)}`, '_blank', 'noopener noreferrer');
+    });
+    card.appendChild(sb);
+  }
+
   if (_mode === 'subreddit' && item.author) {
     const ab = document.createElement('span');
     ab.className  = 'author-badge';
