@@ -337,6 +337,17 @@
     }
     #new-search-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 
+    /* ── Deleted toggle ─────────────────────────── */
+    #deleted-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.88rem;
+      white-space: nowrap;
+    }
+    #deleted-btn:hover:not(:disabled) { border-color: #a78bfa; color: #a78bfa; }
+    #deleted-btn.active { border-color: #a78bfa; color: #a78bfa; background: rgba(167,139,250,.12); }
+
     /* ── Select button in header ─────────────────── */
     #select-btn {
       background: none;
@@ -645,6 +656,7 @@
       </div>
       <input type="text" id="username" placeholder="Reddit username (e.g. spez)" autocomplete="off" spellcheck="false" />
 <button id="scrape-btn">Scrape</button>
+      <button id="deleted-btn" title="Also search archived copies of deleted posts">+ Deleted</button>
       <button id="select-btn" hidden>Select</button>
     </div>
     <button id="new-search-btn">+ New Search</button>
@@ -756,6 +768,7 @@ function mkState() {
     loading       : false,
     items         : { images: [], gifs: [], videos: [] },
     postGroups    : { images: new Map(), gifs: new Map(), videos: new Map() },
+    seenIds       : new Set(),   /* post IDs already processed — used to dedup archive results */
     /* subreddit mode: all items per post, ordered post list, rendered post count */
     postItemsMap  : { images: new Map(), gifs: new Map(), videos: new Map() },
     subPostOrder  : { images: [], gifs: [], videos: [] },
@@ -772,6 +785,7 @@ let _rgToken = null, _rgTokenTs = 0;
 let _useProxy = false;
 let _mode = 'user'; /* 'user' | 'subreddit' */
 let _sort = 'hot';  /* subreddit sort: hot | top | new | rising */
+let _includeDeleted = false;
 
 /* ── Fetch with CORS-proxy fallback ──────────────── */
 const PROXY = u => 'https://corsproxy.io/?' + encodeURIComponent(u);
@@ -1026,6 +1040,7 @@ async function fetchAllPosts() {
 
     const batch = { images:[], gifs:[], videos:[] };
     for (const p of posts) {
+      S.seenIds.add(p.data.id);
       for (const item of extractPost(p.data)) {
         S.items[item.cat].push(item);
         batch[item.cat].push(item);
@@ -1038,6 +1053,67 @@ async function fetchAllPosts() {
     if (!after) break;
     await sleep(CFG.apiDelay);
   }
+}
+
+/* ── Archived / deleted posts (Arctic Shift → PullPush fallback) ─────── */
+
+async function fetchArchivedPosts() {
+  /* Two archive sources; try Arctic Shift first, fall back to PullPush */
+  const sources = [
+    (author, before) =>
+      `https://arctic-shift.photon-reddit.com/api/posts/search?author=${encodeURIComponent(author)}&limit=100${before ? '&before=' + before : ''}`,
+    (author, before) =>
+      `https://api.pullpush.io/reddit/search/submission/?author=${encodeURIComponent(author)}&size=100${before ? '&before=' + before : ''}`,
+  ];
+
+  let srcIndex = 0;
+  let before   = '';
+  let page     = 0;
+  let found    = 0;
+
+  outer: while (page < CFG.maxPages) {
+    page++;
+    setProgress('Searching archive for deleted posts…', `${found} new items found`, null);
+
+    let posts = null;
+    for (let s = srcIndex; s < sources.length; s++) {
+      try {
+        const url = sources[s](S.user, before);
+        const r   = await fetch(url, { credentials: 'omit' });
+        if (!r.ok) continue;
+        const json = await r.json();
+        /* Arctic Shift: json.data  |  PullPush: json.data */
+        posts = json.data;
+        srcIndex = s; /* stick with the source that worked */
+        break;
+      } catch {}
+    }
+    if (!posts || !posts.length) break;
+
+    const batch = { images:[], gifs:[], videos:[] };
+    for (const d of posts) {
+      if (S.seenIds.has(d.id)) continue; /* already in results */
+      S.seenIds.add(d.id);
+      for (const item of extractPost(d)) {
+        item.archived = true;
+        S.items[item.cat].push(item);
+        batch[item.cat].push(item);
+        if (item.rgid) S.rgQueue.push(item);
+        found++;
+      }
+    }
+    appendToGrids(batch);
+    updateCounts();
+
+    /* Paginate: use created_utc of the oldest post as `before` */
+    const oldest = posts[posts.length - 1];
+    const nextBefore = oldest?.created_utc;
+    if (!nextBefore || posts.length < 100) break;
+    before = nextBefore;
+    await sleep(CFG.apiDelay);
+  }
+
+  return found;
 }
 
 /* ── Redgifs resolution ──────────────────────────── */
@@ -1222,6 +1298,14 @@ function buildCard(item) {
     badge.hidden = true;
   }
   card.appendChild(badge);
+
+  if (item.archived) {
+    const arc = document.createElement('span');
+    arc.className   = 'badge';
+    arc.textContent = 'DELETED';
+    arc.style.cssText = 'top:auto;bottom:6px;right:6px;background:rgba(167,139,250,.85);';
+    card.appendChild(arc);
+  }
 
   const img = document.createElement('img');
   /* GIFs: show the animated source directly; everything else uses the static preview */
@@ -1886,6 +1970,7 @@ $('mode-user').addEventListener('click', () => {
   $('mode-user').classList.add('active');
   $('mode-sub').classList.remove('active');
   $('sort-row').setAttribute('hidden', '');
+  $('deleted-btn').style.display = '';
   usernameEl.placeholder = 'Reddit username (e.g. spez)';
 });
 $('mode-sub').addEventListener('click', () => {
@@ -1893,7 +1978,12 @@ $('mode-sub').addEventListener('click', () => {
   $('mode-sub').classList.add('active');
   $('mode-user').classList.remove('active');
   $('sort-row').removeAttribute('hidden');
+  $('deleted-btn').style.display = 'none';
   usernameEl.placeholder = 'Subreddit name (e.g. pics)';
+});
+$('deleted-btn').addEventListener('click', () => {
+  _includeDeleted = !_includeDeleted;
+  $('deleted-btn').classList.toggle('active', _includeDeleted);
 });
 
 /* ── Sort toggle (subreddit mode only) ───────────── */
@@ -1944,6 +2034,10 @@ async function startScrape() {
   try {
     if (_mode === 'user') fetchUserProfile(S.user); /* fire-and-forget */
     await fetchAllPosts();
+
+    if (_includeDeleted && _mode === 'user') {
+      await fetchArchivedPosts();
+    }
 
     if (total() === 0) {
       $('empty-notice').removeAttribute('hidden');
@@ -2034,6 +2128,7 @@ async function searchSubs(q) {
         $('mode-sub').classList.add('active');
         $('mode-user').classList.remove('active');
         $('sort-row').removeAttribute('hidden');
+        $('deleted-btn').style.display = 'none';
         usernameEl.placeholder = 'Subreddit name (e.g. pics)';
         usernameEl.value = s.display_name;
         setFinderOpen(false);
