@@ -665,6 +665,7 @@
       <div class="mode-toggle">
         <button id="mode-user" class="mode-btn active">u/</button>
         <button id="mode-sub"  class="mode-btn">r/</button>
+        <button id="mode-tw"   class="mode-btn">𝕏</button>
       </div>
       <div id="sort-row" class="mode-toggle" hidden>
         <button class="sort-btn mode-btn active" data-sort="hot">Hot</button>
@@ -805,8 +806,11 @@ let S = mkState();
 
 let _rgToken = null, _rgTokenTs = 0;
 let _useProxy = false;
-let _mode = 'user'; /* 'user' | 'subreddit' */
+let _mode = 'user'; /* 'user' | 'subreddit' | 'twitter' */
 let _sort = 'hot';  /* subreddit sort: hot | top | new | rising */
+
+const TW_BEARER = 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I7BeIg1ezFo%3DI4dKyd4wW2iEObgTqheqfyHVoTDlRsOGozH1CRjnkuFJ1Ra0Nz';
+let _twGuestToken = null, _twGuestTokenTs = 0;
 
 /* ── Fetch with CORS-proxy fallback ──────────────── */
 const PROXY = u => 'https://corsproxy.io/?' + encodeURIComponent(u);
@@ -1226,6 +1230,101 @@ async function fetchArchivedPosts() {
   return found;
 }
 
+/* ── Twitter / X scraping ────────────────────────── */
+
+async function fetchTwGuestToken() {
+  if (_twGuestToken && Date.now() - _twGuestTokenTs < 10 * 60 * 1000) return _twGuestToken;
+  const r = await fetch(PROXY('https://api.twitter.com/1.1/guest/activate.json'), {
+    method: 'POST',
+    credentials: 'omit',
+    headers: { Authorization: 'Bearer ' + TW_BEARER },
+  });
+  if (!r.ok) throw new Error(`Twitter guest auth failed (${r.status}). The API may be unavailable.`);
+  const data = await r.json();
+  _twGuestToken    = data.guest_token;
+  _twGuestTokenTs  = Date.now();
+  return _twGuestToken;
+}
+
+async function twApiFetch(path) {
+  const token   = await fetchTwGuestToken();
+  const url     = 'https://api.twitter.com' + path;
+  const headers = { Authorization: 'Bearer ' + TW_BEARER, 'x-guest-token': token };
+  for (const px of DL_PROXIES.slice(1)) {
+    try {
+      const r = await fetch(px(url), { credentials: 'omit', headers });
+      if (r.status === 404) throw new Error(`Twitter user @${S.user} not found.`);
+      if (r.status === 401 || r.status === 403)
+        throw new Error(`Twitter API access denied (${r.status}) — guest access may be restricted.`);
+      if (!r.ok) continue;
+      return await r.json();
+    } catch (e) {
+      if (e.message.startsWith('Twitter')) throw e;
+    }
+  }
+  throw new Error('Twitter API is unavailable — all CORS proxies failed. Try again later.');
+}
+
+function extractTweet(tweet) {
+  if (tweet.retweeted_status) return [];
+  const media    = tweet.extended_entities?.media || tweet.entities?.media || [];
+  if (!media.length) return [];
+  const tweetUrl = `https://twitter.com/i/web/status/${tweet.id_str}`;
+  const title    = (tweet.full_text || tweet.text || '').replace(/https?:\/\/t\.co\/\S+/g, '').trim();
+  const author   = tweet.user?.screen_name || '';
+  const out      = [];
+  for (const m of media) {
+    if (m.type === 'photo') {
+      out.push({
+        cat: 'images',
+        src: m.media_url_https + ':orig',
+        preview: m.media_url_https + ':small',
+        poster: null, postUrl: tweetUrl, title, author,
+      });
+    } else if (m.type === 'video' || m.type === 'animated_gif') {
+      const variants = (m.video_info?.variants || []).filter(v => v.content_type === 'video/mp4');
+      variants.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+      if (variants[0]) {
+        out.push({
+          cat: m.type === 'animated_gif' ? 'gifs' : 'videos',
+          src: variants[0].url,
+          preview: m.media_url_https,
+          poster: m.media_url_https,
+          postUrl: tweetUrl, title, author,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+async function fetchTwitterMedia() {
+  let maxId = '';
+  let page  = 0;
+  while (page < CFG.maxPages) {
+    page++;
+    setProgress('Fetching tweets…', `Page ${page} · ${total()} items`, null);
+    const idParam = maxId ? `&max_id=${maxId}` : '';
+    const data = await twApiFetch(
+      `/1.1/statuses/user_timeline.json?screen_name=${encodeURIComponent(S.user)}&count=200&tweet_mode=extended&include_entities=1${idParam}`
+    );
+    if (!Array.isArray(data) || !data.length) break;
+    const batch = { images: [], gifs: [], videos: [] };
+    for (const tweet of data) {
+      for (const item of extractTweet(tweet)) {
+        S.items[item.cat].push(item);
+        batch[item.cat].push(item);
+      }
+    }
+    appendToGrids(batch);
+    updateCounts();
+    const lastId = data[data.length - 1].id_str;
+    maxId = (BigInt(lastId) - 1n).toString();
+    if (data.length < 200) break;
+    await sleep(CFG.apiDelay);
+  }
+}
+
 /* ── Redgifs resolution ──────────────────────────── */
 
 async function fetchRgToken() {
@@ -1494,6 +1593,7 @@ function renderLb() {
   $('lb-title').textContent = item.title || '(untitled)';
   $('lb-count').textContent = `${idx + 1} / ${list.length}`;
   $('lb-post').href         = item.postUrl;
+  $('lb-post').textContent  = _mode === 'twitter' ? 'View tweet ↗' : 'Reddit post ↗';
   $('lb-open').href         = item.src || item.preview || '#';
   $('lb-hint').hidden       = item.cat === 'videos';
 
@@ -2081,20 +2181,24 @@ function showError(msg) {
 }
 
 /* ── Mode toggle ─────────────────────────────────── */
-$('mode-user').addEventListener('click', () => {
-  _mode = 'user';
-  $('mode-user').classList.add('active');
-  $('mode-sub').classList.remove('active');
-  $('sort-row').setAttribute('hidden', '');
-  usernameEl.placeholder = 'Reddit username (e.g. spez)';
-});
-$('mode-sub').addEventListener('click', () => {
-  _mode = 'subreddit';
-  $('mode-sub').classList.add('active');
-  $('mode-user').classList.remove('active');
-  $('sort-row').removeAttribute('hidden');
-  usernameEl.placeholder = 'Subreddit name (e.g. pics)';
-});
+function setMode(m) {
+  _mode = m;
+  $('mode-user').classList.toggle('active', m === 'user');
+  $('mode-sub').classList.toggle('active', m === 'subreddit');
+  $('mode-tw').classList.toggle('active', m === 'twitter');
+  if (m === 'subreddit') {
+    $('sort-row').removeAttribute('hidden');
+    usernameEl.placeholder = 'Subreddit name (e.g. pics)';
+  } else {
+    $('sort-row').setAttribute('hidden', '');
+    usernameEl.placeholder = m === 'twitter'
+      ? 'Twitter/X username (e.g. elonmusk)'
+      : 'Reddit username (e.g. spez)';
+  }
+}
+$('mode-user').addEventListener('click', () => setMode('user'));
+$('mode-sub').addEventListener('click', () => setMode('subreddit'));
+$('mode-tw').addEventListener('click', () => setMode('twitter'));
 /* ── Sort toggle (subreddit mode only) ───────────── */
 document.querySelectorAll('.sort-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -2111,7 +2215,7 @@ scrapeBtn.addEventListener('click', startScrape);
 usernameEl.addEventListener('keydown', e => { if (e.key === 'Enter') startScrape(); });
 
 async function startScrape() {
-  const user = usernameEl.value.trim().replace(/^u\//, '');
+  const user = usernameEl.value.trim().replace(/^u\//, '').replace(/^@/, '');
   if (!user || S.loading) return;
 
   S = mkState();
@@ -2141,15 +2245,20 @@ async function startScrape() {
   });
 
   try {
-    if (_mode === 'user') fetchUserProfile(S.user); /* fire-and-forget */
-    await fetchAllPosts();
-
-    if (_mode === 'user') {
-      await fetchArchivedPosts();
+    if (_mode === 'twitter') {
+      await fetchTwitterMedia();
+    } else {
+      if (_mode === 'user') fetchUserProfile(S.user); /* fire-and-forget */
+      await fetchAllPosts();
+      if (_mode === 'user') await fetchArchivedPosts();
     }
 
     if (total() === 0) {
-      $('empty-notice').removeAttribute('hidden');
+      const notice = $('empty-notice');
+      notice.textContent = _mode === 'twitter'
+        ? 'No images or videos found for this Twitter/X user.'
+        : 'No images, GIFs, or videos found for this user.';
+      notice.removeAttribute('hidden');
       $('progress-area').setAttribute('hidden', '');
       return;
     }
@@ -2233,11 +2342,7 @@ async function searchSubs(q) {
         (s.over18 ? `<span class="nsfw-pill">NSFW</span>` : '') +
         `<div class="sub-result-desc">${htmlEsc(s.public_description || s.title || '')}</div>`;
       card.addEventListener('click', () => {
-        _mode = 'subreddit';
-        $('mode-sub').classList.add('active');
-        $('mode-user').classList.remove('active');
-        $('sort-row').removeAttribute('hidden');
-        usernameEl.placeholder = 'Subreddit name (e.g. pics)';
+        setMode('subreddit');
         usernameEl.value = s.display_name;
         setFinderOpen(false);
         startScrape();
@@ -2253,11 +2358,7 @@ async function searchSubs(q) {
 (function () {
   const u = new URLSearchParams(location.search).get('u');
   if (!u) return;
-  /* Switch to user mode */
-  _mode = 'user';
-  $('mode-user').classList.add('active');
-  $('mode-sub').classList.remove('active');
-  usernameEl.placeholder = 'Reddit username (e.g. spez)';
+  setMode('user');
   usernameEl.value = u;
   startScrape();
 }());
