@@ -616,16 +616,7 @@
     #find-sub-btn:hover:not(:disabled) { background: var(--bg); border-color: var(--muted); }
     #find-sub-btn.active { border-color: var(--blue); color: var(--blue); }
 
-    #link-search-btn {
-      background: none;
-      border: 1px solid var(--border);
-      color: var(--text);
-      font-size: 0.85rem;
-      padding: 7px 14px;
-      flex-shrink: 0;
-    }
-    #link-search-btn:hover:not(:disabled) { background: var(--bg); border-color: var(--muted); }
-    #link-search-btn.active { border-color: #f59e0b; color: #f59e0b; }
+
 
     /* ── Subreddit finder page ───────────────────── */
     #finder-page {
@@ -694,7 +685,7 @@
   <div class="hdr">
     <h1>Reddit Media Scraper</h1>
     <button id="find-sub-btn">Find Subreddits</button>
-    <button id="link-search-btn">Find by link</button>
+
     <div class="search-row">
       <div class="mode-toggle">
         <button id="mode-user" class="mode-btn active">u/</button>
@@ -775,16 +766,6 @@
   <div id="empty-notice" hidden>No images, GIFs, or videos found for this user.</div>
 </div>
 
-<!-- ── Link search page ───────────────────────────── -->
-<div id="link-search-page" hidden>
-  <div style="max-width:1400px;margin:20px auto 60px;padding:0 24px;">
-    <input type="text" id="link-search-input"
-      placeholder="OnlyFans link, username, or any social URL… (e.g. onlyfans.com/username)"
-      autocomplete="off" spellcheck="false"
-      style="width:100%;font-size:1rem;padding:11px 16px;margin-bottom:18px;" />
-    <div id="link-search-results"></div>
-  </div>
-</div>
 
 <!-- ── Subreddit finder page ──────────────────────── -->
 <div id="finder-page" hidden>
@@ -2252,7 +2233,7 @@ function setFinderOpen(open) {
   $('progress-area').hidden = open;
   $('error-area').hidden    = open;
   $('main').hidden          = open;
-  if (open) { setLinkSearchOpen(false); setTimeout(() => $('sub-search').focus(), 50); }
+  if (open) setTimeout(() => $('sub-search').focus(), 50);
 }
 
 $('find-sub-btn').addEventListener('click', () => setFinderOpen(!_finderOpen));
@@ -2315,103 +2296,6 @@ async function searchSubs(q) {
   }
 }
 
-/* ── Link search ─────────────────────────────────── */
-let _linkSearchOpen  = false;
-let _linkSearchTimer = null;
-
-function setLinkSearchOpen(open) {
-  _linkSearchOpen = open;
-  $('link-search-page').hidden = !open;
-  $('link-search-btn').classList.toggle('active', open);
-  $('profile-card').setAttribute('hidden', '');
-  $('progress-area').hidden = open;
-  $('error-area').hidden    = open;
-  $('main').hidden          = open;
-  if (open) { setFinderOpen(false); setTimeout(() => $('link-search-input').focus(), 50); }
-}
-
-$('link-search-btn').addEventListener('click', () => setLinkSearchOpen(!_linkSearchOpen));
-
-$('link-search-input').addEventListener('input', () => {
-  clearTimeout(_linkSearchTimer);
-  const q = $('link-search-input').value.trim();
-  if (!q) { $('link-search-results').innerHTML = ''; return; }
-  _linkSearchTimer = setTimeout(() => searchByLink(q), 500);
-});
-
-async function searchByLink(rawQuery) {
-  const resultsEl = $('link-search-results');
-  resultsEl.innerHTML = '<div style="color:var(--muted);font-size:.85rem;padding:4px 0">Searching…</div>';
-
-  /* Strip protocol and trailing slashes */
-  const normalized = rawQuery.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
-
-  /* If no dot → treat as bare username, fan out to common platforms */
-  const candidates = normalized.includes('.')
-    ? [normalized]
-    : [
-        `onlyfans.com/${normalized}`,
-        `fansly.com/${normalized}`,
-        `linktr.ee/${normalized}`,
-        `redgifs.com/users/${normalized}`,
-        `instagram.com/${normalized}`,
-      ];
-
-  const found = new Map(); /* username → { posts: [] } */
-
-  await Promise.allSettled(
-    candidates.flatMap(q => [
-      `https://www.reddit.com/search.json?q=${encodeURIComponent(q)}&sort=new&limit=100&include_over_18=1&raw_json=1`,
-      `https://www.reddit.com/search.json?q=${encodeURIComponent('https://' + q)}&sort=new&limit=100&include_over_18=1&raw_json=1`,
-    ]).map(async url => {
-      try {
-        const r = await apiFetch(url);
-        if (!r.ok) return;
-        const { data } = await r.json();
-        for (const child of (data?.children || [])) {
-          const p = child.data;
-          if (!p?.author || p.author === '[deleted]') continue;
-          if (!found.has(p.author)) found.set(p.author, { posts: [] });
-          found.get(p.author).posts.push({
-            title:   p.title || '',
-            postUrl: 'https://reddit.com' + (p.permalink || ''),
-            sub:     p.subreddit_name_prefixed || '',
-          });
-        }
-      } catch {}
-    })
-  );
-
-  if (!found.size) {
-    resultsEl.innerHTML = '<div style="color:var(--muted);font-size:.85rem;padding:4px 0">No Reddit accounts found mentioning this link.</div>';
-    return;
-  }
-
-  /* Sort by number of matching posts — more posts = stronger match */
-  const sorted = [...found.entries()].sort((a, b) => b[1].posts.length - a[1].posts.length);
-
-  resultsEl.innerHTML = '';
-  for (const [username, info] of sorted.slice(0, 30)) {
-    const post = info.posts[0];
-    const card = document.createElement('div');
-    card.className = 'sub-result';
-    card.innerHTML =
-      `<div class="sub-result-left">` +
-        `<div class="sub-result-name">u/${htmlEsc(username)}</div>` +
-        `<div class="sub-result-meta">` +
-          `${htmlEsc(post.sub)}${post.sub ? ' · ' : ''}${htmlEsc(post.title.slice(0, 90))}` +
-          (info.posts.length > 1 ? ` <span style="color:var(--accent);font-weight:700">(${info.posts.length} posts)</span>` : '') +
-        `</div>` +
-      `</div>`;
-    card.addEventListener('click', () => {
-      setMode('user');
-      usernameEl.value = username;
-      setLinkSearchOpen(false);
-      startScrape();
-    });
-    resultsEl.appendChild(card);
-  }
-}
 
 /* ── Auto-start from ?u=username or ?r=subreddit URL parameter ── */
 (function () {
