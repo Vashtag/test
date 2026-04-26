@@ -616,6 +616,34 @@
     #find-sub-btn:hover:not(:disabled) { background: var(--bg); border-color: var(--muted); }
     #find-sub-btn.active { border-color: var(--blue); color: var(--blue); }
 
+    /* ── Reverse-search button ──────────────────── */
+    #rev-search-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 0.85rem;
+      padding: 7px 14px;
+      flex-shrink: 0;
+    }
+    #rev-search-btn:hover:not(:disabled) { background: var(--bg); border-color: var(--muted); }
+    #rev-search-btn.active { border-color: var(--green); color: var(--green); }
+
+    /* ── Reverse-search page ────────────────────── */
+    #rev-search-page {
+      max-width: 900px;
+      margin: 20px auto 60px;
+      padding: 0 24px;
+    }
+    #rev-preview-img {
+      max-height: 220px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      display: block;
+      margin-bottom: 14px;
+      object-fit: contain;
+    }
+    .rev-ext-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+
 
 
     /* ── Subreddit finder page ───────────────────── */
@@ -685,6 +713,7 @@
   <div class="hdr">
     <h1>Reddit Media Scraper</h1>
     <button id="find-sub-btn">Find Subreddits</button>
+    <button id="rev-search-btn">Reverse Search</button>
 
     <div class="search-row">
       <div class="mode-toggle">
@@ -766,6 +795,17 @@
   <div id="empty-notice" hidden>No images, GIFs, or videos found for this user.</div>
 </div>
 
+
+<!-- ── Reverse image search page ─────────────────── -->
+<div id="rev-search-page" hidden>
+  <input type="text" id="rev-search-input"
+    placeholder="Paste an image URL or Reddit post URL…"
+    autocomplete="off" spellcheck="false"
+    style="width:100%;font-size:1rem;padding:11px 16px;margin-bottom:14px;" />
+  <img id="rev-preview-img" hidden referrerpolicy="no-referrer" alt="" />
+  <div id="rev-ext-btns" class="rev-ext-btns" hidden></div>
+  <div id="rev-search-results"></div>
+</div>
 
 <!-- ── Subreddit finder page ──────────────────────── -->
 <div id="finder-page" hidden>
@@ -2233,7 +2273,7 @@ function setFinderOpen(open) {
   $('progress-area').hidden = open;
   $('error-area').hidden    = open;
   $('main').hidden          = open;
-  if (open) setTimeout(() => $('sub-search').focus(), 50);
+  if (open) { setRevSearchOpen(false); setTimeout(() => $('sub-search').focus(), 50); }
 }
 
 $('find-sub-btn').addEventListener('click', () => setFinderOpen(!_finderOpen));
@@ -2296,6 +2336,130 @@ async function searchSubs(q) {
   }
 }
 
+
+/* ── Reverse image search ────────────────────────── */
+let _revSearchOpen  = false;
+let _revSearchTimer = null;
+
+function setRevSearchOpen(open) {
+  _revSearchOpen = open;
+  $('rev-search-page').hidden = !open;
+  $('rev-search-btn').classList.toggle('active', open);
+  $('profile-card').setAttribute('hidden', '');
+  $('progress-area').hidden = open;
+  $('error-area').hidden    = open;
+  $('main').hidden          = open;
+  if (open) { setFinderOpen(false); setTimeout(() => $('rev-search-input').focus(), 50); }
+}
+
+$('rev-search-btn').addEventListener('click', () => setRevSearchOpen(!_revSearchOpen));
+
+$('rev-search-input').addEventListener('input', () => {
+  clearTimeout(_revSearchTimer);
+  const q = $('rev-search-input').value.trim();
+  $('rev-preview-img').hidden = true;
+  $('rev-ext-btns').hidden    = true;
+  $('rev-search-results').innerHTML = '';
+  if (!q) return;
+  _revSearchTimer = setTimeout(() => doReverseSearch(q), 600);
+});
+
+async function doReverseSearch(rawInput) {
+  const resultsEl  = $('rev-search-results');
+  const previewImg = $('rev-preview-img');
+  const extBtns    = $('rev-ext-btns');
+  resultsEl.innerHTML = '<div style="color:var(--muted);font-size:.85rem;">Searching…</div>';
+
+  let imageUrl = rawInput.trim();
+
+  /* If it's a Reddit post URL, fetch the post and extract the image URL */
+  const postMatch = imageUrl.match(/reddit\.com\/(?:r|u)\/[^/]+\/comments\/([a-z0-9]+)/i);
+  if (postMatch) {
+    try {
+      const r = await apiFetch(`https://www.reddit.com/comments/${postMatch[1]}.json?limit=1&raw_json=1`);
+      if (r.ok) {
+        const json  = await r.json();
+        const post  = json[0]?.data?.children?.[0]?.data;
+        const src   = post?.url || '';
+        if (src && /^https?:\/\/i\.redd\.it\//i.test(src)) imageUrl = src;
+        else if (src && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(src)) imageUrl = src;
+        else {
+          const previewSrc = post?.preview?.images?.[0]?.source?.url || '';
+          if (previewSrc) imageUrl = dec(previewSrc);
+        }
+      }
+    } catch {}
+  }
+
+  /* Strip query params for a cleaner search query */
+  const cleanUrl = imageUrl.replace(/\?.*$/, '');
+
+  /* Show image preview */
+  previewImg.src    = cleanUrl;
+  previewImg.hidden = false;
+
+  /* External reverse-image search buttons */
+  extBtns.hidden    = false;
+  extBtns.innerHTML = [
+    ['Google Lens',  `https://lens.google.com/uploadbyurl?url=${encodeURIComponent(cleanUrl)}`],
+    ['SauceNAO',     `https://saucenao.com/?url=${encodeURIComponent(cleanUrl)}`],
+    ['TinEye',       `https://tineye.com/search?url=${encodeURIComponent(cleanUrl)}`],
+    ['Yandex Images',`https://yandex.com/images/search?url=${encodeURIComponent(cleanUrl)}&rpt=imageview`],
+  ].map(([label, href]) =>
+    `<a href="${htmlEsc(href)}" target="_blank" rel="noopener noreferrer" class="lb-link">${htmlEsc(label)} ↗</a>`
+  ).join('');
+
+  /* Search Reddit for posts whose link IS this image URL */
+  const found = new Map(); /* username → [{ title, postUrl, sub }] */
+  try {
+    const r = await apiFetch(
+      `https://www.reddit.com/search.json?q=url:${encodeURIComponent(cleanUrl)}&include_over_18=1&limit=100&sort=new&raw_json=1`
+    );
+    if (r.ok) {
+      const { data } = await r.json();
+      for (const child of (data?.children || [])) {
+        const p = child.data;
+        if (!p?.author || p.author === '[deleted]') continue;
+        if (!found.has(p.author)) found.set(p.author, []);
+        found.get(p.author).push({
+          title:   p.title || '',
+          postUrl: 'https://reddit.com' + (p.permalink || ''),
+          sub:     p.subreddit_name_prefixed || '',
+        });
+      }
+    }
+  } catch {}
+
+  if (!found.size) {
+    resultsEl.innerHTML =
+      '<div style="color:var(--muted);font-size:.85rem;padding:4px 0">' +
+      'No Reddit posts found with this exact URL. Use the buttons above for visual reverse search.' +
+      '</div>';
+    return;
+  }
+
+  resultsEl.innerHTML = '';
+  for (const [username, posts] of found) {
+    const post = posts[0];
+    const card = document.createElement('div');
+    card.className = 'sub-result';
+    card.innerHTML =
+      `<div class="sub-result-left">` +
+        `<div class="sub-result-name">u/${htmlEsc(username)}</div>` +
+        `<div class="sub-result-meta">` +
+          `${htmlEsc(post.sub)}${post.sub ? ' · ' : ''}${htmlEsc(post.title.slice(0, 90))}` +
+          (posts.length > 1 ? ` <span style="color:var(--accent);font-weight:700">(${posts.length} posts)</span>` : '') +
+        `</div>` +
+      `</div>`;
+    card.addEventListener('click', () => {
+      setMode('user');
+      usernameEl.value = username;
+      setRevSearchOpen(false);
+      startScrape();
+    });
+    resultsEl.appendChild(card);
+  }
+}
 
 /* ── Auto-start from ?u=username or ?r=subreddit URL parameter ── */
 (function () {
