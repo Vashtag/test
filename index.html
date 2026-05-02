@@ -616,17 +616,44 @@
     #find-sub-btn:hover:not(:disabled) { background: var(--bg); border-color: var(--muted); }
     #find-sub-btn.active { border-color: var(--blue); color: var(--blue); }
 
-    /* ── Reverse-search button ──────────────────── */
-    #rev-search-btn {
+    /* ── Settings gear ──────────────────────────── */
+    #settings-wrap { position: relative; flex-shrink: 0; }
+    #settings-btn {
       background: none;
       border: 1px solid var(--border);
-      color: var(--text);
-      font-size: 0.85rem;
-      padding: 7px 14px;
-      flex-shrink: 0;
+      color: var(--muted);
+      font-size: 1.05rem;
+      padding: 6px 10px;
+      line-height: 1;
     }
-    #rev-search-btn:hover:not(:disabled) { background: var(--bg); border-color: var(--muted); }
-    #rev-search-btn.active { border-color: var(--green); color: var(--green); }
+    #settings-btn:hover:not(:disabled) { background: var(--bg); color: var(--text); border-color: var(--muted); }
+    #settings-btn.active { border-color: var(--accent); color: var(--accent); }
+    #settings-dropdown {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 5px;
+      z-index: 30;
+      min-width: 210px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.45);
+    }
+    .settings-item {
+      display: block;
+      width: 100%;
+      background: none;
+      border: none;
+      border-radius: 5px;
+      color: var(--text);
+      font-size: 0.88rem;
+      padding: 8px 12px;
+      text-align: left;
+      cursor: pointer;
+    }
+    .settings-item:hover { background: var(--bg); color: var(--accent); }
+    .settings-item.active { color: var(--accent); }
 
     /* ── Reverse-search page ────────────────────── */
     #rev-search-page {
@@ -643,18 +670,6 @@
       object-fit: contain;
     }
     .rev-ext-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
-
-    /* ── Reddit search page ─────────────────────── */
-    #reddit-search-btn {
-      background: none;
-      border: 1px solid var(--border);
-      color: var(--text);
-      font-size: 0.85rem;
-      padding: 7px 14px;
-      flex-shrink: 0;
-    }
-    #reddit-search-btn:hover:not(:disabled) { background: var(--bg); border-color: var(--muted); }
-    #reddit-search-btn.active { border-color: var(--accent); color: var(--accent); }
 
     /* ── Subreddit finder page ───────────────────── */
     #finder-page {
@@ -723,8 +738,13 @@
   <div class="hdr">
     <h1>Reddit Media Scraper</h1>
     <button id="find-sub-btn">Find Subreddits</button>
-    <button id="reddit-search-btn">Search Reddit</button>
-    <button id="rev-search-btn">Reverse Search</button>
+    <div id="settings-wrap">
+      <button id="settings-btn" title="More tools">⚙</button>
+      <div id="settings-dropdown" hidden>
+        <button class="settings-item" id="open-reddit-search">🔍 Search Reddit</button>
+        <button class="settings-item" id="open-rev-search">🔎 Reverse Image Search</button>
+      </div>
+    </div>
 
     <div class="search-row">
       <div class="mode-toggle">
@@ -2363,7 +2383,6 @@ let _revSearchTimer = null;
 function setRevSearchOpen(open) {
   _revSearchOpen = open;
   $('rev-search-page').hidden = !open;
-  $('rev-search-btn').classList.toggle('active', open);
   $('profile-card').setAttribute('hidden', '');
   $('progress-area').hidden = open;
   $('error-area').hidden    = open;
@@ -2371,7 +2390,6 @@ function setRevSearchOpen(open) {
   if (open) { setFinderOpen(false); setRedditSearchOpen(false); setTimeout(() => $('rev-search-input').focus(), 50); }
 }
 
-$('rev-search-btn').addEventListener('click', () => setRevSearchOpen(!_revSearchOpen));
 
 $('rev-search-input').addEventListener('input', () => {
   clearTimeout(_revSearchTimer);
@@ -2487,7 +2505,6 @@ let _redditSearchTimer = null;
 function setRedditSearchOpen(open) {
   _redditSearchOpen = open;
   $('reddit-search-page').hidden = !open;
-  $('reddit-search-btn').classList.toggle('active', open);
   $('profile-card').setAttribute('hidden', '');
   $('progress-area').hidden = open;
   $('error-area').hidden    = open;
@@ -2495,7 +2512,6 @@ function setRedditSearchOpen(open) {
   if (open) { setFinderOpen(false); setRevSearchOpen(false); setTimeout(() => $('reddit-search-input').focus(), 50); }
 }
 
-$('reddit-search-btn').addEventListener('click', () => setRedditSearchOpen(!_redditSearchOpen));
 
 $('reddit-search-input').addEventListener('input', () => {
   clearTimeout(_redditSearchTimer);
@@ -2551,6 +2567,34 @@ async function searchReddit(q) {
     res.innerHTML = '<div style="color:var(--muted);font-size:.85rem;padding:4px 0;grid-column:1/-1">Search failed.</div>';
   }
 }
+
+/* ── Settings gear ───────────────────────────────── */
+let _settingsOpen = false;
+
+function closeSettings() {
+  _settingsOpen = false;
+  $('settings-dropdown').hidden = true;
+  $('settings-btn').classList.remove('active');
+}
+
+$('settings-btn').addEventListener('click', e => {
+  e.stopPropagation();
+  _settingsOpen = !_settingsOpen;
+  $('settings-dropdown').hidden = !_settingsOpen;
+  $('settings-btn').classList.toggle('active', _settingsOpen);
+});
+
+document.addEventListener('click', () => { if (_settingsOpen) closeSettings(); });
+
+$('open-reddit-search').addEventListener('click', () => {
+  closeSettings();
+  setRedditSearchOpen(!_redditSearchOpen);
+});
+
+$('open-rev-search').addEventListener('click', () => {
+  closeSettings();
+  setRevSearchOpen(!_revSearchOpen);
+});
 
 /* ── Auto-start from ?u=username or ?r=subreddit URL parameter ── */
 (function () {
