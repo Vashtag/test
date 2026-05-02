@@ -2358,10 +2358,7 @@ async function searchSubs(q) {
         (s.over18 ? `<span class="nsfw-pill">NSFW</span>` : '') +
         `<div class="sub-result-desc">${htmlEsc(s.public_description || s.title || '')}</div>`;
       card.addEventListener('click', () => {
-        setMode('subreddit');
-        usernameEl.value = s.display_name;
-        setFinderOpen(false);
-        startScrape();
+        window.open(`${location.origin + location.pathname}?r=${encodeURIComponent(s.display_name)}`, '_blank', 'noopener noreferrer');
       });
       res.appendChild(card);
     }
