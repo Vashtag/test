@@ -644,7 +644,17 @@
     }
     .rev-ext-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
 
-
+    /* ── Reddit search page ─────────────────────── */
+    #reddit-search-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 0.85rem;
+      padding: 7px 14px;
+      flex-shrink: 0;
+    }
+    #reddit-search-btn:hover:not(:disabled) { background: var(--bg); border-color: var(--muted); }
+    #reddit-search-btn.active { border-color: var(--accent); color: var(--accent); }
 
     /* ── Subreddit finder page ───────────────────── */
     #finder-page {
@@ -713,6 +723,7 @@
   <div class="hdr">
     <h1>Reddit Media Scraper</h1>
     <button id="find-sub-btn">Find Subreddits</button>
+    <button id="reddit-search-btn">Search Reddit</button>
     <button id="rev-search-btn">Reverse Search</button>
 
     <div class="search-row">
@@ -795,6 +806,14 @@
   <div id="empty-notice" hidden>No images, GIFs, or videos found for this user.</div>
 </div>
 
+
+<!-- ── Reddit search page ────────────────────────── -->
+<div id="reddit-search-page" hidden>
+  <div style="max-width:1400px;margin:20px auto 60px;padding:0 24px;">
+    <input type="text" id="reddit-search-input" placeholder="Search Reddit (e.g. onlyfans username, topic…)" autocomplete="off" spellcheck="false" style="width:100%;font-size:1rem;padding:11px 16px;margin-bottom:18px;" />
+    <div id="reddit-search-results" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:8px;"></div>
+  </div>
+</div>
 
 <!-- ── Reverse image search page ─────────────────── -->
 <div id="rev-search-page" hidden>
@@ -2273,7 +2292,7 @@ function setFinderOpen(open) {
   $('progress-area').hidden = open;
   $('error-area').hidden    = open;
   $('main').hidden          = open;
-  if (open) { setRevSearchOpen(false); setTimeout(() => $('sub-search').focus(), 50); }
+  if (open) { setRevSearchOpen(false); setRedditSearchOpen(false); setTimeout(() => $('sub-search').focus(), 50); }
 }
 
 $('find-sub-btn').addEventListener('click', () => setFinderOpen(!_finderOpen));
@@ -2349,7 +2368,7 @@ function setRevSearchOpen(open) {
   $('progress-area').hidden = open;
   $('error-area').hidden    = open;
   $('main').hidden          = open;
-  if (open) { setFinderOpen(false); setTimeout(() => $('rev-search-input').focus(), 50); }
+  if (open) { setFinderOpen(false); setRedditSearchOpen(false); setTimeout(() => $('rev-search-input').focus(), 50); }
 }
 
 $('rev-search-btn').addEventListener('click', () => setRevSearchOpen(!_revSearchOpen));
@@ -2458,6 +2477,78 @@ async function doReverseSearch(rawInput) {
       startScrape();
     });
     resultsEl.appendChild(card);
+  }
+}
+
+/* ── Reddit search ───────────────────────────────── */
+let _redditSearchOpen  = false;
+let _redditSearchTimer = null;
+
+function setRedditSearchOpen(open) {
+  _redditSearchOpen = open;
+  $('reddit-search-page').hidden = !open;
+  $('reddit-search-btn').classList.toggle('active', open);
+  $('profile-card').setAttribute('hidden', '');
+  $('progress-area').hidden = open;
+  $('error-area').hidden    = open;
+  $('main').hidden          = open;
+  if (open) { setFinderOpen(false); setRevSearchOpen(false); setTimeout(() => $('reddit-search-input').focus(), 50); }
+}
+
+$('reddit-search-btn').addEventListener('click', () => setRedditSearchOpen(!_redditSearchOpen));
+
+$('reddit-search-input').addEventListener('input', () => {
+  clearTimeout(_redditSearchTimer);
+  const q = $('reddit-search-input').value.trim();
+  if (!q) { $('reddit-search-results').innerHTML = ''; return; }
+  _redditSearchTimer = setTimeout(() => searchReddit(q), 400);
+});
+
+async function searchReddit(q) {
+  const res = $('reddit-search-results');
+  res.innerHTML = '<div style="color:var(--muted);font-size:.85rem;padding:4px 0;grid-column:1/-1">Searching…</div>';
+  try {
+    const r = await apiFetch(
+      `https://www.reddit.com/search.json?q=${encodeURIComponent(q)}&include_over_18=1&sort=relevance&limit=100&raw_json=1`
+    );
+    if (!r.ok) throw new Error();
+    const { data } = await r.json();
+    const posts = (data?.children || []).map(c => c.data).filter(p => p?.author && p.author !== '[deleted]');
+    if (!posts.length) {
+      res.innerHTML = '<div style="color:var(--muted);font-size:.85rem;padding:4px 0;grid-column:1/-1">No results found.</div>';
+      return;
+    }
+    res.innerHTML = '';
+    for (const p of posts) {
+      const card = document.createElement('div');
+      card.className = 'sub-result';
+      card.style.cursor = 'default';
+      card.innerHTML =
+        `<div class="sub-result-left" style="flex:1;min-width:0;">` +
+          `<div class="sub-result-name" style="font-weight:400;font-size:.85rem;white-space:normal;line-height:1.4;">${htmlEsc(p.title)}</div>` +
+          `<div class="sub-result-meta" style="margin-top:4px;">` +
+            `<span class="rs-sub" data-sub="${htmlEsc(p.subreddit)}" style="color:var(--blue);cursor:pointer;">r/${htmlEsc(p.subreddit)}</span>` +
+            ` · ` +
+            `<span class="rs-user" data-user="${htmlEsc(p.author)}" style="color:var(--accent);cursor:pointer;">u/${htmlEsc(p.author)}</span>` +
+          `</div>` +
+        `</div>` +
+        (p.over_18 ? `<span class="nsfw-pill">NSFW</span>` : '');
+      card.querySelector('.rs-sub').addEventListener('click', () => {
+        setMode('subreddit');
+        usernameEl.value = p.subreddit;
+        setRedditSearchOpen(false);
+        startScrape();
+      });
+      card.querySelector('.rs-user').addEventListener('click', () => {
+        setMode('user');
+        usernameEl.value = p.author;
+        setRedditSearchOpen(false);
+        startScrape();
+      });
+      res.appendChild(card);
+    }
+  } catch {
+    res.innerHTML = '<div style="color:var(--muted);font-size:.85rem;padding:4px 0;grid-column:1/-1">Search failed.</div>';
   }
 }
 
