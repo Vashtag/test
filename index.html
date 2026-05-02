@@ -604,18 +604,6 @@
       flex-shrink: 0;
     }
 
-    /* ── Find-subs button ───────────────────────── */
-    #find-sub-btn {
-      background: none;
-      border: 1px solid var(--border);
-      color: var(--text);
-      font-size: 0.85rem;
-      padding: 7px 14px;
-      flex-shrink: 0;
-    }
-    #find-sub-btn:hover:not(:disabled) { background: var(--bg); border-color: var(--muted); }
-    #find-sub-btn.active { border-color: var(--blue); color: var(--blue); }
-
     /* ── Settings gear ──────────────────────────── */
     #settings-wrap { position: relative; flex-shrink: 0; }
     #settings-btn {
@@ -737,10 +725,10 @@
 <header>
   <div class="hdr">
     <h1>Reddit Media Scraper</h1>
-    <button id="find-sub-btn">Find Subreddits</button>
     <div id="settings-wrap">
-      <button id="settings-btn" title="More tools">⚙</button>
+      <button id="settings-btn" title="Tools">⚙</button>
       <div id="settings-dropdown" hidden>
+        <button class="settings-item" id="open-sub-finder">📂 Find Subreddits</button>
         <button class="settings-item" id="open-reddit-search">🔍 Search Reddit</button>
         <button class="settings-item" id="open-rev-search">🔎 Reverse Image Search</button>
       </div>
@@ -2306,16 +2294,14 @@ let _finderOpen = false;
 
 function setFinderOpen(open) {
   _finderOpen = open;
-  $('finder-page').hidden  = !open;
-  $('find-sub-btn').classList.toggle('active', open);
+  $('finder-page').hidden = !open;
   $('profile-card').setAttribute('hidden', '');
   $('progress-area').hidden = open;
   $('error-area').hidden    = open;
   $('main').hidden          = open;
+  if (open) $('dl-bar').setAttribute('hidden', '');
   if (open) { setRevSearchOpen(false); setRedditSearchOpen(false); setTimeout(() => $('sub-search').focus(), 50); }
 }
-
-$('find-sub-btn').addEventListener('click', () => setFinderOpen(!_finderOpen));
 
 $('sub-search').addEventListener('input', () => {
   clearTimeout(_subSearchTimer);
@@ -2328,12 +2314,21 @@ async function searchSubs(q) {
   const res = $('sub-results');
   res.innerHTML = '<div style="color:var(--muted);font-size:.85rem;padding:4px 0">Searching…</div>';
   try {
-    const r = await apiFetch(
-      `https://www.reddit.com/subreddits/search.json?q=${encodeURIComponent(q)}&limit=25&raw_json=1&include_over_18=1`
-    );
-    if (!r.ok) throw new Error();
-    const { data } = await r.json();
-    const raw = data.children.map(c => c.data);
+    const base = `https://www.reddit.com/subreddits/search.json?q=${encodeURIComponent(q)}&limit=100&raw_json=1&include_over_18=1`;
+    const r1 = await apiFetch(base);
+    if (!r1.ok) throw new Error();
+    const { data: d1 } = await r1.json();
+    let raw = d1.children.map(c => c.data);
+    /* Fetch a second page if available */
+    if (d1.after) {
+      try {
+        const r2 = await apiFetch(`${base}&after=${d1.after}`);
+        if (r2.ok) {
+          const { data: d2 } = await r2.json();
+          raw = raw.concat(d2.children.map(c => c.data));
+        }
+      } catch {}
+    }
     const ql  = q.toLowerCase();
     /* Sort: exact name → name starts-with → name contains → rest; then by subscribers */
     const rank = s => {
@@ -2387,7 +2382,7 @@ function setRevSearchOpen(open) {
   $('progress-area').hidden = open;
   $('error-area').hidden    = open;
   $('main').hidden          = open;
-  if (open) { setFinderOpen(false); setRedditSearchOpen(false); setTimeout(() => $('rev-search-input').focus(), 50); }
+  if (open) { setFinderOpen(false); setRedditSearchOpen(false); $('dl-bar').setAttribute('hidden', ''); setTimeout(() => $('rev-search-input').focus(), 50); }
 }
 
 
@@ -2509,7 +2504,7 @@ function setRedditSearchOpen(open) {
   $('progress-area').hidden = open;
   $('error-area').hidden    = open;
   $('main').hidden          = open;
-  if (open) { setFinderOpen(false); setRevSearchOpen(false); setTimeout(() => $('reddit-search-input').focus(), 50); }
+  if (open) { setFinderOpen(false); setRevSearchOpen(false); $('dl-bar').setAttribute('hidden', ''); setTimeout(() => $('reddit-search-input').focus(), 50); }
 }
 
 
@@ -2585,6 +2580,11 @@ $('settings-btn').addEventListener('click', e => {
 });
 
 document.addEventListener('click', () => { if (_settingsOpen) closeSettings(); });
+
+$('open-sub-finder').addEventListener('click', () => {
+  closeSettings();
+  setFinderOpen(!_finderOpen);
+});
 
 $('open-reddit-search').addEventListener('click', () => {
   closeSettings();
