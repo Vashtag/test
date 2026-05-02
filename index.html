@@ -4,8 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Reddit Media Scraper</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    [hidden] { display: none !important; }
 
     :root {
       --bg:       #0d1117;
@@ -58,6 +60,50 @@
       flex: 1;
       min-width: 240px;
     }
+
+    .mode-toggle {
+      display: flex;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .mode-btn {
+      padding: 9px 14px;
+      background: none;
+      border: none;
+      border-radius: 0;
+      color: var(--muted);
+      font-size: 0.85rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .mode-btn:hover:not(:disabled) { background: var(--bg); color: var(--text); }
+    .mode-btn.active { background: var(--accent); color: #fff; }
+    .mode-btn.active:hover:not(:disabled) { background: var(--accentH); }
+
+    /* ── Sort dropdowns ──────────────────────────────── */
+    .sort-select {
+      padding: 8px 28px 8px 12px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      outline: none;
+      -webkit-appearance: none;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath fill='%238b949e' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 9px center;
+      transition: border-color .15s;
+      flex-shrink: 0;
+    }
+    .sort-select:hover, .sort-select:focus { border-color: var(--accent); }
+    .sort-select option { background: var(--surface); color: var(--text); }
 
     input[type="text"] {
       flex: 1;
@@ -178,13 +224,23 @@
 
     /* ── Grid ────────────────────────────────────── */
     .grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: flex-start;
+    }
+
+    .flat-grid {
       columns: 6 150px;
       column-gap: 8px;
     }
 
+    /* Extra left gap marks the start of a new post */
+    .card.post-first { margin-left: 20px; }
+
     .card {
-      break-inside: avoid;
-      margin-bottom: 8px;
+      flex: 0 0 150px;
+      margin-bottom: 0;
       border-radius: 6px;
       overflow: hidden;
       background: var(--surface);
@@ -227,6 +283,206 @@
       padding: 2px 5px;
       border-radius: 4px;
       pointer-events: none;
+    }
+
+    .author-badge {
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      background: rgba(0,0,0,.78);
+      border-radius: 4px;
+      color: #fff;
+      cursor: pointer;
+      font-size: 0.58rem;
+      font-weight: 700;
+      letter-spacing: .5px;
+      max-width: calc(100% - 16px);
+      overflow: hidden;
+      padding: 2px 5px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      z-index: 4;
+    }
+    .author-badge:hover { background: rgba(88,166,255,.8); }
+
+    /* ── Select mode ────────────────────────────────*/
+    .card .chk {
+      position: absolute;
+      top: 6px; left: 6px;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,.55);
+      background: rgba(0,0,0,.5);
+      z-index: 3;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity .15s, background .12s, border-color .12s;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .select-mode .card .chk        { opacity: 1; }
+    .card.selected                  { border-color: var(--accent) !important; box-shadow: 0 0 0 2px var(--accent) !important; }
+    .card.selected .chk             { background: var(--accent); border-color: var(--accent); }
+    .card.selected .chk::after      { content: '✓'; color: #fff; font-size: 13px; font-weight: 800; }
+
+    /* ── Download bar ────────────────────────────── */
+    #dl-bar {
+      position: sticky;
+      bottom: 0;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 11px 24px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      z-index: 15;
+    }
+    #dl-count-text { flex: 1; font-size: 0.85rem; color: var(--muted); }
+    #dl-bar .ghost {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 0.82rem;
+      padding: 6px 14px;
+    }
+    #dl-bar .ghost:hover:not(:disabled) { background: var(--bg); border-color: var(--accent); color: var(--accent); }
+    #dl-btn { background: var(--blue); }
+    #dl-btn:hover:not(:disabled) { background: #3a86d4; }
+
+    /* ── New-search button ───────────────────────── */
+    #new-search-btn {
+      margin-left: auto;
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.82rem;
+      white-space: nowrap;
+    }
+    #new-search-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+
+    /* ── Deleted toggle ─────────────────────────── */
+    /* ── Select button in header ─────────────────── */
+    #select-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 0.88rem;
+    }
+    #select-btn:hover:not(:disabled) { background: var(--bg); border-color: var(--muted); }
+    #select-btn.active { border-color: var(--accent); color: var(--accent); }
+
+    /* ── Profile card ───────────────────────────────*/
+    #profile-card {
+      max-width: 1400px;
+      margin: 14px auto 0;
+      padding: 0 24px;
+    }
+
+    .profile-inner {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 18px;
+    }
+
+    #profile-avatar {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+      background: var(--border);
+    }
+
+    .profile-info { min-width: 0; }
+
+    #profile-name {
+      font-weight: 600;
+      font-size: 0.95rem;
+      margin-bottom: 4px;
+    }
+    #profile-name a { color: var(--text); text-decoration: none; }
+    #profile-name a:hover { color: var(--accent); }
+
+    #profile-bio {
+      font-size: 0.83rem;
+      color: var(--muted);
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    #profile-bio a { color: var(--blue); text-decoration: none; }
+    #profile-bio a:hover { text-decoration: underline; }
+
+    #profile-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    #profile-links a {
+      font-size: 0.8rem;
+      color: var(--blue);
+      text-decoration: none;
+      border: 1px solid var(--border);
+      padding: 3px 10px;
+      border-radius: 4px;
+      background: rgba(88,166,255,.06);
+      transition: border-color .15s, background .15s;
+    }
+    #profile-links a:hover { border-color: var(--blue); background: rgba(88,166,255,.14); }
+
+    #find-alts-btn {
+      flex-shrink: 0;
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.75rem;
+      padding: 3px 9px;
+      border-radius: 4px;
+      white-space: nowrap;
+      margin-top: 2px;
+    }
+    #find-alts-btn:hover:not(:disabled) { border-color: #a78bfa; color: #a78bfa; }
+    #find-alts-btn:disabled { opacity: .5; cursor: default; }
+
+    #profile-alts {
+      margin-top: 8px;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+    #profile-alts .alt-label { margin-right: 6px; }
+    #profile-alts a {
+      color: #a78bfa;
+      text-decoration: none;
+      margin-right: 8px;
+      white-space: nowrap;
+    }
+    #profile-alts a:hover { text-decoration: underline; }
+
+    /* ── Load More ──────────────────────────────────*/
+    .load-more-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      padding: 24px 0 8px;
+      font-size: 0.83rem;
+      color: var(--muted);
+    }
+    #load-more-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 0.83rem;
+      padding: 7px 22px;
+    }
+    #load-more-btn:hover:not(:disabled) {
+      background: none;
+      border-color: var(--accent);
+      color: var(--accent);
     }
 
     /* ── Empty state ─────────────────────────────── */
@@ -348,9 +604,113 @@
       flex-shrink: 0;
     }
 
+    /* ── Find-subs button ───────────────────────── */
+    #find-sub-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 0.85rem;
+      padding: 7px 14px;
+      flex-shrink: 0;
+    }
+    #find-sub-btn:hover:not(:disabled) { background: var(--bg); border-color: var(--muted); }
+    #find-sub-btn.active { border-color: var(--blue); color: var(--blue); }
+
+    /* ── Reverse-search button ──────────────────── */
+    #rev-search-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 0.85rem;
+      padding: 7px 14px;
+      flex-shrink: 0;
+    }
+    #rev-search-btn:hover:not(:disabled) { background: var(--bg); border-color: var(--muted); }
+    #rev-search-btn.active { border-color: var(--green); color: var(--green); }
+
+    /* ── Reverse-search page ────────────────────── */
+    #rev-search-page {
+      max-width: 900px;
+      margin: 20px auto 60px;
+      padding: 0 24px;
+    }
+    #rev-preview-img {
+      max-height: 220px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      display: block;
+      margin-bottom: 14px;
+      object-fit: contain;
+    }
+    .rev-ext-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+
+    /* ── Reddit search page ─────────────────────── */
+    #reddit-search-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 0.85rem;
+      padding: 7px 14px;
+      flex-shrink: 0;
+    }
+    #reddit-search-btn:hover:not(:disabled) { background: var(--bg); border-color: var(--muted); }
+    #reddit-search-btn.active { border-color: var(--accent); color: var(--accent); }
+
+    /* ── Subreddit finder page ───────────────────── */
+    #finder-page {
+      max-width: 1400px;
+      margin: 20px auto 60px;
+      padding: 0 24px;
+    }
+    #sub-search {
+      width: 100%;
+      font-size: 1rem;
+      padding: 11px 16px;
+      margin-bottom: 18px;
+    }
+    #sub-results {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 8px;
+    }
+    .sub-result {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      cursor: pointer;
+      background: var(--bg);
+      transition: border-color .15s;
+    }
+    .sub-result:hover { border-color: var(--accent); }
+    .sub-result-left { min-width: 0; }
+    .sub-result-name { font-weight: 700; font-size: 0.9rem; }
+    .sub-result-meta { font-size: 0.75rem; color: var(--muted); margin-top: 1px; }
+    .sub-result-desc {
+      flex: 1;
+      font-size: 0.8rem;
+      color: var(--muted);
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .nsfw-pill {
+      font-size: 0.65rem;
+      font-weight: 700;
+      background: var(--accent);
+      color: #fff;
+      padding: 2px 6px;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+
     /* ── Responsive ──────────────────────────────── */
     @media (max-width: 600px) {
-      .grid { columns: 2 120px; }
+      .flat-grid { columns: 2 120px; }
+      .card { flex-basis: 120px; }
       #lb-media { max-width: 100vw; }
       .lb-nav { padding: 12px 9px; font-size: 1.5rem; }
     }
@@ -362,12 +722,54 @@
 <header>
   <div class="hdr">
     <h1>Reddit Media Scraper</h1>
+    <button id="find-sub-btn">Find Subreddits</button>
+    <button id="reddit-search-btn">Search Reddit</button>
+    <button id="rev-search-btn">Reverse Search</button>
+
     <div class="search-row">
+      <div class="mode-toggle">
+        <button id="mode-user" class="mode-btn active">u/</button>
+        <button id="mode-sub"  class="mode-btn">r/</button>
+      </div>
+      <div id="sort-row" style="display:flex;gap:6px;" hidden>
+        <select id="sort-select" class="sort-select">
+          <option value="hot">Hot</option>
+          <option value="top">Top</option>
+          <option value="new">New</option>
+          <option value="rising">Rising</option>
+        </select>
+        <select id="time-select" class="sort-select" hidden>
+          <option value="hour">Past hour</option>
+          <option value="day">Past 24 hours</option>
+          <option value="week" selected>Past week</option>
+          <option value="month">Past month</option>
+          <option value="year">Past year</option>
+          <option value="all">All time</option>
+        </select>
+      </div>
       <input type="text" id="username" placeholder="Reddit username (e.g. spez)" autocomplete="off" spellcheck="false" />
-      <button id="scrape-btn">Scrape</button>
+<button id="scrape-btn">Scrape</button>
+<button id="select-btn" hidden>Select</button>
     </div>
+    <button id="new-search-btn">+ New Search</button>
   </div>
 </header>
+
+<!-- ── Profile card ───────────────────────────────── -->
+<div id="profile-card" hidden>
+  <div class="profile-inner">
+    <img id="profile-avatar" referrerpolicy="no-referrer" alt="" />
+    <div class="profile-info">
+      <div id="profile-name"></div>
+      <div id="profile-bio-row" style="display:flex;align-items:flex-start;gap:8px;">
+        <div id="profile-bio" style="flex:1"></div>
+        <button id="find-alts-btn" hidden title="Search for other Reddit accounts sharing the same bio links">Find alts</button>
+      </div>
+      <div id="profile-links" hidden></div>
+      <div id="profile-alts" hidden></div>
+    </div>
+  </div>
+</div>
 
 <!-- ── Progress ───────────────────────────────────── -->
 <div id="progress-area" hidden>
@@ -395,9 +797,50 @@
     </button>
   </div>
   <div id="grid-images" class="grid tab-pane"></div>
-  <div id="grid-gifs"   class="grid tab-pane" hidden></div>
-  <div id="grid-videos" class="grid tab-pane" hidden></div>
+  <div id="grid-gifs"   class="flat-grid tab-pane" hidden></div>
+  <div id="grid-videos" class="flat-grid tab-pane" hidden></div>
+  <div class="load-more-row" id="load-more-row" hidden>
+    <span id="load-more-count"></span>
+    <button id="load-more-btn">Load 200 more</button>
+  </div>
   <div id="empty-notice" hidden>No images, GIFs, or videos found for this user.</div>
+</div>
+
+
+<!-- ── Reddit search page ────────────────────────── -->
+<div id="reddit-search-page" hidden>
+  <div style="max-width:1400px;margin:20px auto 60px;padding:0 24px;">
+    <input type="text" id="reddit-search-input" placeholder="Search Reddit (e.g. onlyfans username, topic…)" autocomplete="off" spellcheck="false" style="width:100%;font-size:1rem;padding:11px 16px;margin-bottom:18px;" />
+    <div id="reddit-search-results" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:8px;"></div>
+  </div>
+</div>
+
+<!-- ── Reverse image search page ─────────────────── -->
+<div id="rev-search-page" hidden>
+  <input type="text" id="rev-search-input"
+    placeholder="Paste an image URL or Reddit post URL…"
+    autocomplete="off" spellcheck="false"
+    style="width:100%;font-size:1rem;padding:11px 16px;margin-bottom:14px;" />
+  <img id="rev-preview-img" hidden referrerpolicy="no-referrer" alt="" />
+  <div id="rev-ext-btns" class="rev-ext-btns" hidden></div>
+  <div id="rev-search-results"></div>
+</div>
+
+<!-- ── Subreddit finder page ──────────────────────── -->
+<div id="finder-page" hidden>
+  <div id="finder-inner">
+    <input type="text" id="sub-search" placeholder="Search subreddits by name or topic…" autocomplete="off" spellcheck="false" />
+    <div id="sub-results"></div>
+  </div>
+</div>
+
+<!-- ── Download bar (sticky footer) ──────────────── -->
+<div id="dl-bar" hidden>
+  <span id="dl-count-text">0 selected</span>
+  <button class="ghost" id="sel-all-btn">Select all</button>
+  <button class="ghost" id="desel-deleted-btn">Deselect deleted</button>
+  <button class="ghost" id="desel-btn">Deselect all</button>
+  <button id="dl-btn">&#8659; Download selected</button>
 </div>
 
 <!-- ── Lightbox ───────────────────────────────────── -->
@@ -432,21 +875,65 @@ const CFG = {
   apiDelay  : 350,
   rgBatch   : 4,
   rgTtl     : 5 * 60 * 1000,
+  pageSize  : 200,
 };
 
 /* ── State ───────────────────────────────────────── */
 function mkState() {
   return {
-    user    : '',
-    loading : false,
-    items   : { images: [], gifs: [], videos: [] },
-    rgQueue : [],
-    lb      : null,   // { list, idx }
+    user          : '',
+    loading       : false,
+    items         : { images: [], gifs: [], videos: [] },
+    postGroups    : { images: new Map(), gifs: new Map(), videos: new Map() },
+    seenIds       : new Set(),   /* post IDs already processed — used to dedup archive results */
+    /* subreddit mode: all items per post, ordered post list, rendered post count */
+    postItemsMap  : { images: new Map(), gifs: new Map(), videos: new Map() },
+    subPostOrder  : { images: [], gifs: [], videos: [] },
+    rendered      : { images: 0, gifs: 0, videos: 0 },
+    rgQueue       : [],
+    lb            : null,
+    selecting     : false,
+    selected      : new Set(),
   };
 }
 let S = mkState();
 
 let _rgToken = null, _rgTokenTs = 0;
+let _useProxy = false;
+let _mode = 'user'; /* 'user' | 'subreddit' */
+let _sort = 'hot';     /* subreddit sort: hot | top | new | rising */
+let _topTime = 'week'; /* subreddit top time: hour | day | week | month | year | all */
+
+
+/* ── Fetch with CORS-proxy fallback ──────────────── */
+const PROXY = u => 'https://corsproxy.io/?' + encodeURIComponent(u);
+
+/* No credentials, no referrer — CDN servers never learn this page's URL */
+const BASE_OPTS = { credentials: 'omit', referrerPolicy: 'no-referrer' };
+
+async function apiFetch(url, opts = {}) {
+  const go = u => fetch(u, { ...BASE_OPTS, ...opts });
+
+  async function withRetry(u) {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const r = await go(u);
+      if (r.status !== 429) return r;
+      const secs = Math.min(parseInt(r.headers.get('Retry-After') || '') || 10, 60);
+      setProgress('Rate limited by Reddit…', `Retrying in ${secs}s…`, null);
+      await sleep(secs * 1000);
+    }
+    return go(u);
+  }
+
+  if (!_useProxy) {
+    try {
+      const r = await withRetry(url);
+      if (r.status !== 429) return r;
+      _useProxy = true; /* still throttled after retries — switch to proxy */
+    } catch { _useProxy = true; }
+  }
+  return withRetry(PROXY(url));
+}
 
 /* ── DOM helpers ─────────────────────────────────── */
 const $   = id => document.getElementById(id);
@@ -479,12 +966,195 @@ function total() {
   return S.items.images.length + S.items.gifs.length + S.items.videos.length;
 }
 
+/* ── Profile ─────────────────────────────────────── */
+
+function htmlEsc(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function linkify(text) {
+  /* Match markdown links [text](url) first, then bare URLs */
+  const re = /\[([^\]]*)\]\((https?:\/\/[^)]+)\)|https?:\/\/[^\s\])"]+/g;
+  let out = '', last = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    out += htmlEsc(text.slice(last, m.index));
+    if (m[1] !== undefined) {
+      out += `<a href="${htmlEsc(m[2])}" target="_blank" rel="noopener" referrerpolicy="no-referrer">${htmlEsc(m[1])}</a>`;
+    } else {
+      out += `<a href="${htmlEsc(m[0])}" target="_blank" rel="noopener" referrerpolicy="no-referrer">${htmlEsc(m[0])}</a>`;
+    }
+    last = m.index + m[0].length;
+  }
+  return out + htmlEsc(text.slice(last));
+}
+
+/* Walk a JSON string to extract the array value for a given key. */
+function extractJsonArray(str, key) {
+  const idx = str.indexOf(`"${key}":`);
+  if (idx === -1) return null;
+  const start = str.indexOf('[', idx);
+  if (start === -1) return null;
+  let depth = 0;
+  for (let i = start; i < str.length; i++) {
+    if (str[i] === '[') depth++;
+    else if (str[i] === ']' && --depth === 0) return str.slice(start, i + 1);
+  }
+  return null;
+}
+
+async function fetchUserProfile(user) {
+  try {
+    const aboutUrl   = `https://www.reddit.com/user/${encodeURIComponent(user)}/about.json?raw_json=1`;
+    const profileUrl = `https://www.reddit.com/user/${encodeURIComponent(user)}/`;
+
+    const [aboutRes, pageRes] = await Promise.allSettled([
+      apiFetch(aboutUrl),
+      apiFetch(profileUrl),
+    ]);
+
+    if (aboutRes.status !== 'fulfilled' || !aboutRes.value.ok) return;
+    const { data } = await aboutRes.value.json();
+
+    /* Extract social links from the JSON Reddit embeds in the profile page */
+    const socialLinks = [];
+    if (pageRes.status === 'fulfilled' && pageRes.value.ok) {
+      try {
+        const html = await pageRes.value.text();
+        const raw  = extractJsonArray(html, 'socialLinks');
+        if (raw) {
+          for (const l of JSON.parse(raw)) {
+            const url = l.outboundUrl || l.url;
+            if (url?.startsWith('http'))
+              socialLinks.push({ text: l.displayText || l.title || url, url });
+          }
+        }
+      } catch { /* silently skip */ }
+    }
+
+    const avatarUrl = (data.icon_img || data.snoovatar_img || '').replace(/\?.*$/, '');
+    const bio       = (data.subreddit?.public_description || '').trim();
+    const name      = data.name || user;
+
+    $('profile-avatar').src    = avatarUrl || '';
+    $('profile-avatar').hidden = !avatarUrl;
+
+    $('profile-name').innerHTML =
+      `<a href="https://www.reddit.com/user/${htmlEsc(name)}" target="_blank" rel="noopener" referrerpolicy="no-referrer">u/${htmlEsc(name)}</a>`;
+
+    const bioEl = $('profile-bio');
+    bioEl.innerHTML = bio ? linkify(bio) : '';
+    bioEl.hidden    = !bio;
+
+    const linksEl = $('profile-links');
+    if (socialLinks.length) {
+      linksEl.innerHTML = socialLinks.map(l =>
+        `<a href="${htmlEsc(l.url)}" target="_blank" rel="noopener" referrerpolicy="no-referrer">${htmlEsc(l.text)}</a>`
+      ).join('');
+      linksEl.hidden = false;
+    } else {
+      linksEl.hidden = true;
+    }
+
+    $('profile-card').removeAttribute('hidden');
+
+    const allLinks = socialLinks.map(l => l.url)
+      /* Full URLs in bio (with protocol) */
+      .concat([...bio.matchAll(/https?:\/\/\S+/g)].map(m => m[0].replace(/[)>.,;'"]+$/, '')))
+      /* Bare domain URLs in bio — e.g. "onlyfans.com/user" without https:// */
+      .concat(
+        [...bio.matchAll(/\b((?:onlyfans|fansly|redgifs|twitter|x|instagram|tiktok|patreon|manyvids|linktr)\.(?:com|ee)\/[A-Za-z0-9_.@/-]+)/gi)]
+          .map(m => 'https://' + m[1].replace(/[)>.,;'"]+$/, ''))
+      )
+      .filter(Boolean);
+
+    const altBtn = $('find-alts-btn');
+    altBtn.hidden = (allLinks.length === 0);
+    altBtn.disabled = false;
+    altBtn.textContent = 'Find alts';
+    /* Replace listener to bind fresh user/links on each scrape */
+    const newBtn = altBtn.cloneNode(true);
+    altBtn.replaceWith(newBtn);
+    newBtn.addEventListener('click', async () => {
+      newBtn.disabled = true;
+      newBtn.textContent = 'Searching…';
+      await findAlts(user, allLinks);
+      newBtn.hidden = true;
+    });
+
+  } catch { /* profile is optional — silently skip on error */ }
+}
+
+/* ── Alt-account finder ──────────────────────────── */
+async function findAlts(currentUser, links) {
+  const altsEl = $('profile-alts');
+  altsEl.hidden  = true;
+  altsEl.innerHTML = '';
+
+  /* Extract usernames from known platform URLs */
+  const platformRe = [
+    /(?:redgifs\.com\/users?|onlyfans\.com|fansly\.com|manyvids\.com|patreon\.com|twitter\.com|x\.com|instagram\.com|tiktok\.com\/@?)\/([A-Za-z0-9_.\-]{2,})/i,
+    /linktr\.ee\/([A-Za-z0-9_.\-]{2,})/i,
+  ];
+  const candidates = new Set();
+  for (const url of links) {
+    for (const re of platformRe) {
+      const m = url.match(re);
+      if (m) candidates.add(m[1].replace(/^@/, '').toLowerCase());
+    }
+  }
+
+  const found = new Map(); /* username → profile URL */
+
+  /* 1 — Reddit name search for each extracted platform username */
+  await Promise.allSettled([...candidates].map(async q => {
+    try {
+      const r = await apiFetch(
+        `https://www.reddit.com/api/search_reddit_names.json?query=${encodeURIComponent(q)}&include_over_18=true&exact=false`
+      );
+      if (!r.ok) return;
+      const { names } = await r.json();
+      for (const n of (names || [])) {
+        if (n.toLowerCase() === currentUser.toLowerCase()) continue;
+        /* Only include if the name contains the query string (avoids unrelated matches) */
+        if (n.toLowerCase().includes(q) || q.includes(n.toLowerCase()))
+          found.set(n, `https://www.reddit.com/user/${encodeURIComponent(n)}/`);
+      }
+    } catch {}
+  }));
+
+  /* 2 — Reddit post search for each external link — find other authors who share it */
+  await Promise.allSettled(links.slice(0, 4).map(async url => {
+    try {
+      const r = await apiFetch(
+        `https://www.reddit.com/search.json?q=${encodeURIComponent(url)}&type=link&limit=25&sort=new`
+      );
+      if (!r.ok) return;
+      const { data } = await r.json();
+      for (const child of (data?.children || [])) {
+        const author = child.data?.author;
+        if (!author || author === '[deleted]' || author.toLowerCase() === currentUser.toLowerCase()) continue;
+        found.set(author, `https://www.reddit.com/user/${encodeURIComponent(author)}/`);
+      }
+    } catch {}
+  }));
+
+  if (!found.size) return;
+
+  altsEl.innerHTML =
+    `<span class="alt-label">Other accounts found:</span>` +
+    [...found.entries()].slice(0, 8).map(([name, url]) =>
+      `<a href="${htmlEsc(url)}" target="_blank" rel="noopener" referrerpolicy="no-referrer">u/${htmlEsc(name)}</a>`
+    ).join('');
+  altsEl.hidden = false;
+}
+
 /* ── Extraction ──────────────────────────────────── */
 
 function extractPost(d) {
   if (d.is_self) return [];
   const postUrl = 'https://reddit.com' + d.permalink;
   const title   = d.title || '';
+  const author  = d.author || '';
   const out     = [];
 
   /* Gallery */
@@ -499,15 +1169,15 @@ function extractPost(d) {
         const still  = dec(meta.s.u   || '');
         const prev   = pickRes(meta.p) || still;
         if (gifSrc)
-          out.push({ cat:'gifs',   src:gifSrc, preview:prev||gifSrc, poster:null, postUrl, title });
+          out.push({ cat:'gifs',   src:gifSrc, preview:prev||gifSrc, poster:null, postUrl, title, author });
         else if (mp4Src)
-          out.push({ cat:'videos', src:mp4Src, preview:prev||still,  poster:still, postUrl, title });
+          out.push({ cat:'videos', src:mp4Src, preview:prev||still,  poster:still, postUrl, title, author });
         continue;
       }
 
       const src  = dec(meta.s.u || meta.s.url || '');
       const prev = pickRes(meta.p) || src;
-      if (src) out.push({ cat:'images', src, preview:prev, poster:null, postUrl, title });
+      if (src) out.push({ cat:'images', src, preview:prev, poster:null, postUrl, title, author });
     }
     return out;
   }
@@ -517,7 +1187,7 @@ function extractPost(d) {
   if (rgid) {
     const poster = dec(d.preview?.images?.[0]?.source?.url || '');
     const prev   = pickRes(d.preview?.images?.[0]?.resolutions) || poster;
-    out.push({ cat:'videos', src:null, preview:prev, poster, rgid, postUrl, title });
+    out.push({ cat:'videos', src:null, preview:prev, poster, rgid, postUrl, title, author });
     return out;
   }
 
@@ -526,7 +1196,7 @@ function extractPost(d) {
     const rv     = d.media.reddit_video;
     const poster = dec(d.preview?.images?.[0]?.source?.url || '');
     const prev   = pickRes(d.preview?.images?.[0]?.resolutions) || poster;
-    out.push({ cat:'videos', src:dec(rv.fallback_url||''), preview:prev, poster, postUrl, title });
+    out.push({ cat:'videos', src:dec(rv.fallback_url||''), preview:prev, poster, postUrl, title, author });
     return out;
   }
 
@@ -534,7 +1204,7 @@ function extractPost(d) {
   if (isGif(d.url)) {
     const src  = dec(d.url);
     const prev = pickRes(d.preview?.images?.[0]?.resolutions) || src;
-    out.push({ cat:'gifs', src, preview:prev, poster:null, postUrl, title });
+    out.push({ cat:'gifs', src, preview:prev, poster:null, postUrl, title, author });
     return out;
   }
 
@@ -542,7 +1212,7 @@ function extractPost(d) {
   if (d.post_hint === 'image' || isImg(d.url)) {
     const src  = dec(d.preview?.images?.[0]?.source?.url || '') || dec(d.url);
     const prev = pickRes(d.preview?.images?.[0]?.resolutions) || src;
-    if (src) out.push({ cat:'images', src, preview:prev, poster:null, postUrl, title });
+    if (src) out.push({ cat:'images', src, preview:prev, poster:null, postUrl, title, author });
     return out;
   }
 
@@ -553,17 +1223,22 @@ function extractPost(d) {
 
 async function fetchAllPosts() {
   let after = '', page = 0;
+  const isSub  = _mode === 'subreddit';
+  const baseUrl = isSub
+    ? `https://www.reddit.com/r/${encodeURIComponent(S.user)}/${_sort}.json`
+    : `https://www.reddit.com/user/${encodeURIComponent(S.user)}/submitted.json`;
 
   while (page < CFG.maxPages) {
     page++;
     setProgress('Collecting posts…', `Page ${page} · ${total()} items`, null);
 
-    const qs  = `limit=${CFG.pageLimit}&raw_json=1${after ? '&after=' + after : ''}`;
-    const url = `https://www.reddit.com/user/${encodeURIComponent(S.user)}/submitted.json?${qs}`;
-    const res = await fetch(url, { credentials: 'omit' });
+    const timeParam = (isSub && _sort === 'top') ? `&t=${_topTime}` : '';
+    const qs  = `limit=${CFG.pageLimit}&raw_json=1${after ? '&after=' + after : ''}${timeParam}`;
+    const url = `${baseUrl}?${qs}`;
+    const res = await apiFetch(url);
 
-    if (res.status === 404) throw new Error(`User u/${S.user} not found.`);
-    if (res.status === 403) throw new Error(`u/${S.user}'s profile is private.`);
+    if (res.status === 404) throw new Error(isSub ? `r/${S.user} not found.` : `User u/${S.user} not found.`);
+    if (res.status === 403) throw new Error(isSub ? `r/${S.user} is private or quarantined.` : `u/${S.user}'s profile is private.`);
     if (!res.ok)            throw new Error(`Reddit API error (HTTP ${res.status}).`);
 
     const json  = await res.json();
@@ -572,7 +1247,9 @@ async function fetchAllPosts() {
 
     const batch = { images:[], gifs:[], videos:[] };
     for (const p of posts) {
+      S.seenIds.add(p.data.id);
       for (const item of extractPost(p.data)) {
+        item.subreddit = p.data.subreddit || '';
         S.items[item.cat].push(item);
         batch[item.cat].push(item);
         if (item.rgid) S.rgQueue.push(item);
@@ -586,11 +1263,73 @@ async function fetchAllPosts() {
   }
 }
 
+/* ── Archived / deleted posts (Arctic Shift → PullPush fallback) ─────── */
+
+async function fetchArchivedPosts() {
+  /* Two archive sources; try Arctic Shift first, fall back to PullPush */
+  const sources = [
+    (author, before) =>
+      `https://arctic-shift.photon-reddit.com/api/posts/search?author=${encodeURIComponent(author)}&limit=100${before ? '&before=' + before : ''}`,
+    (author, before) =>
+      `https://api.pullpush.io/reddit/search/submission/?author=${encodeURIComponent(author)}&size=100${before ? '&before=' + before : ''}`,
+  ];
+
+  let srcIndex = 0;
+  let before   = '';
+  let page     = 0;
+  let found    = 0;
+
+  outer: while (page < CFG.maxPages) {
+    page++;
+    setProgress('Searching archive for deleted posts…', `${found} new items found`, null);
+
+    let posts = null;
+    for (let s = srcIndex; s < sources.length; s++) {
+      try {
+        const url = sources[s](S.user, before);
+        const r   = await fetch(url, { credentials: 'omit' });
+        if (!r.ok) continue;
+        const json = await r.json();
+        /* Arctic Shift: json.data  |  PullPush: json.data */
+        posts = json.data;
+        srcIndex = s; /* stick with the source that worked */
+        break;
+      } catch {}
+    }
+    if (!posts || !posts.length) break;
+
+    const batch = { images:[], gifs:[], videos:[] };
+    for (const d of posts) {
+      if (S.seenIds.has(d.id)) continue; /* already in results */
+      S.seenIds.add(d.id);
+      for (const item of extractPost(d)) {
+        item.archived   = true;
+        item.subreddit  = d.subreddit || '';
+        S.items[item.cat].push(item);
+        batch[item.cat].push(item);
+        if (item.rgid) S.rgQueue.push(item);
+        found++;
+      }
+    }
+    appendToGrids(batch);
+    updateCounts();
+
+    /* Paginate: use created_utc of the oldest post as `before` */
+    const oldest = posts[posts.length - 1];
+    const nextBefore = oldest?.created_utc;
+    if (!nextBefore || posts.length < 100) break;
+    before = nextBefore;
+    await sleep(CFG.apiDelay);
+  }
+
+  return found;
+}
+
 /* ── Redgifs resolution ──────────────────────────── */
 
 async function fetchRgToken() {
   if (_rgToken && Date.now() - _rgTokenTs < CFG.rgTtl) return _rgToken;
-  const r  = await fetch('https://api.redgifs.com/v2/auth/temporary', { credentials:'omit' });
+  const r  = await apiFetch('https://api.redgifs.com/v2/auth/temporary');
   const d  = await r.json();
   _rgToken   = d.token;
   _rgTokenTs = Date.now();
@@ -607,12 +1346,13 @@ async function resolveRedgifs() {
       S.rgQueue.slice(i, i + CFG.rgBatch).map(async item => {
         try {
           const tok = await fetchRgToken();
-          const r   = await fetch(`https://api.redgifs.com/v2/gifs/${item.rgid}`, {
-            headers: { Authorization: 'Bearer ' + tok }, credentials: 'omit'
+          const r   = await apiFetch(`https://api.redgifs.com/v2/gifs/${item.rgid}`, {
+            headers: { Authorization: 'Bearer ' + tok }
           });
           if (!r.ok) return;
           const { gif } = await r.json();
-          item.src     = gif.urls.hd || gif.urls.sd || item.src;
+          item.src     = gif.urls?.hd || gif.urls?.sd || `https://media.redgifs.com/${gif.id}.mp4`;
+          item.srcSd   = gif.urls?.sd || `https://media.redgifs.com/${gif.id}-mobile.mp4`;
           item.poster  = gif.poster  || gif.thumbnail || item.poster;
           item.preview = gif.poster  || gif.thumbnail || item.preview;
           if (item._thumb) item._thumb.src = item.preview || '';
@@ -630,11 +1370,105 @@ async function resolveRedgifs() {
 
 function appendToGrids(batch) {
   for (const [cat, items] of Object.entries(batch)) {
-    const grid = $('grid-' + cat);
+    const container = $('grid-' + cat);
     for (const item of items) {
+      if (_mode === 'subreddit') {
+        /* Track all items per post */
+        if (!S.postItemsMap[cat].has(item.postUrl)) {
+          S.postItemsMap[cat].set(item.postUrl, []);
+          S.subPostOrder[cat].push(item.postUrl);
+          /* Render one thumbnail per post, up to the page limit */
+          if (S.rendered[cat] < CFG.pageSize) {
+            const card = buildCard(item);
+            item._el = card;
+            container.appendChild(card);
+            S.rendered[cat]++;
+          }
+        }
+        S.postItemsMap[cat].get(item.postUrl).push(item);
+      } else {
+        /* User mode: render each item up to the page limit */
+        if (S.rendered[cat] < CFG.pageSize) {
+          const card = buildCard(item);
+          item._el = card;
+          if (cat === 'images') {
+            const isNew = !S.postGroups[cat].has(item.postUrl);
+            if (isNew) {
+              S.postGroups[cat].set(item.postUrl, true);
+              if (container.children.length > 0) card.classList.add('post-first');
+            }
+          }
+          container.appendChild(card);
+          S.rendered[cat]++;
+        }
+      }
+    }
+  }
+  updateLoadMore();
+}
+
+function loadMore(cat) {
+  const container = $('grid-' + cat);
+  if (_mode === 'subreddit') {
+    const start = S.rendered[cat];
+    const end   = Math.min(start + CFG.pageSize, S.subPostOrder[cat].length);
+    for (let i = start; i < end; i++) {
+      const postUrl  = S.subPostOrder[cat][i];
+      const postItems = S.postItemsMap[cat].get(postUrl);
+      const item = postItems[0];
       const card = buildCard(item);
-      item._el   = card;
-      grid.appendChild(card);
+      item._el = card;
+      container.appendChild(card);
+      S.rendered[cat]++;
+    }
+  } else {
+    const start = S.rendered[cat];
+    const end   = Math.min(start + CFG.pageSize, S.items[cat].length);
+    for (let i = start; i < end; i++) {
+      const item = S.items[cat][i];
+      const card = buildCard(item);
+      item._el = card;
+      if (cat === 'images') {
+        const isNew = !S.postGroups[cat].has(item.postUrl);
+        if (isNew) {
+          S.postGroups[cat].set(item.postUrl, true);
+          if (container.children.length > 0) card.classList.add('post-first');
+        }
+      }
+      container.appendChild(card);
+      S.rendered[cat]++;
+    }
+  }
+  updateLoadMore();
+}
+
+function getActiveTab() {
+  return document.querySelector('.tab.active')?.dataset.tab || 'images';
+}
+
+function updateLoadMore() {
+  const cat      = getActiveTab();
+  const total    = _mode === 'subreddit' ? S.subPostOrder[cat].length : S.items[cat].length;
+  const rendered = S.rendered[cat];
+  const row      = $('load-more-row');
+  if (rendered < total) {
+    $('load-more-count').textContent = `Showing ${rendered} of ${total}`;
+    $('load-more-btn').textContent   = `Load ${Math.min(CFG.pageSize, total - rendered)} more`;
+    row.removeAttribute('hidden');
+  } else {
+    row.setAttribute('hidden', '');
+  }
+}
+
+function updateSubBadges() {
+  if (_mode !== 'subreddit') return;
+  for (const cat of ['images', 'gifs', 'videos']) {
+    for (const [, postItems] of S.postItemsMap[cat]) {
+      const first = postItems[0];
+      if (first._badge && postItems.length > 1) {
+        const n = postItems.length;
+        first._badge.textContent = `${n} ${cat === 'images' ? 'img' : cat === 'gifs' ? 'GIF' : 'vid'}${n > 1 ? 's' : ''}`;
+      }
     }
   }
 }
@@ -643,19 +1477,48 @@ function buildCard(item) {
   const card = document.createElement('div');
   card.className = 'card';
   card.addEventListener('click', () => {
-    const list = S.items[item.cat];
-    openLb(list, list.indexOf(item));
+    if (S.selecting) { toggleCard(item); return; }
+    /* Redgifs: always open native page — better quality & avoids CORS */
+    if (item.rgid) {
+      window.open(`https://www.redgifs.com/watch/${item.rgid}`, '_blank', 'noopener noreferrer');
+      return;
+    }
+    if (_mode === 'subreddit') {
+      const postItems = S.postItemsMap[item.cat].get(item.postUrl) || [item];
+      openLb(postItems, 0);
+    } else {
+      const list = S.items[item.cat];
+      openLb(list, list.indexOf(item));
+    }
   });
 
-  if (item.cat !== 'images') {
-    const badge = document.createElement('span');
-    badge.className   = 'badge';
+  const chk = document.createElement('div');
+  chk.className = 'chk';
+  card.appendChild(chk);
+
+  const badge = document.createElement('span');
+  badge.className = 'badge';
+  if (_mode === 'subreddit') {
+    badge.textContent = '…';
+    item._badge = badge;
+  } else if (item.cat !== 'images') {
     badge.textContent = item.cat === 'gifs' ? 'GIF' : (item.rgid ? 'REDGIF' : 'VIDEO');
-    card.appendChild(badge);
+  } else {
+    badge.hidden = true;
+  }
+  card.appendChild(badge);
+
+  if (item.archived) {
+    const arc = document.createElement('span');
+    arc.className   = 'badge';
+    arc.textContent = 'DELETED';
+    arc.style.cssText = 'top:auto;bottom:6px;right:6px;background:rgba(167,139,250,.85);';
+    card.appendChild(arc);
   }
 
   const img = document.createElement('img');
-  img.src            = item.preview || '';
+  /* GIFs: show the animated source directly; everything else uses the static preview */
+  img.src            = (item.cat === 'gifs' && item.src) ? item.src : (item.preview || '');
   img.alt            = item.title;
   img.loading        = 'lazy';
   img.referrerPolicy = 'no-referrer';
@@ -663,10 +1526,64 @@ function buildCard(item) {
   item._thumb = img;
   card.appendChild(img);
 
+  /* Video hover — play inline on mouseenter, remove on leave */
+  if (item.cat === 'videos') {
+    let hoverVid = null;
+    card.addEventListener('mouseenter', () => {
+      if (!item.src || S.selecting) return;
+      hoverVid = document.createElement('video');
+      hoverVid.muted       = true;
+      hoverVid.loop        = true;
+      hoverVid.playsInline = true;
+      hoverVid.preload     = 'auto';
+      hoverVid.poster      = item.poster || item.preview || '';
+      hoverVid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:2;pointer-events:none;border-radius:inherit;';
+      card.appendChild(hoverVid);
+      /* Set src after appending so the browser starts loading in context */
+      hoverVid.src = item.src;
+      hoverVid.play().catch(() => {
+        /* SD fallback for Redgifs if HD fails */
+        if (item.srcSd && hoverVid) {
+          hoverVid.src = item.srcSd;
+          hoverVid.play().catch(() => {});
+        }
+      });
+    });
+    card.addEventListener('mouseleave', () => {
+      if (hoverVid) { hoverVid.pause(); hoverVid.remove(); hoverVid = null; }
+    });
+  }
+
+  if (_mode === 'subreddit' && item.author) {
+    const ab = document.createElement('span');
+    ab.className  = 'author-badge';
+    ab.textContent = `u/${item.author}`;
+    ab.addEventListener('click', e => {
+      e.stopPropagation();
+      window.open(`${location.href.replace(/\?.*$/, '')}?u=${encodeURIComponent(item.author)}`, '_blank', 'noopener noreferrer');
+    });
+    card.appendChild(ab);
+  }
+
   const cap = document.createElement('div');
-  cap.className   = 'cap';
-  cap.title       = item.title;
-  cap.textContent = item.title || '(untitled)';
+  cap.className = 'cap';
+  cap.title     = item.title;
+  if (_mode === 'user' && item.subreddit) {
+    const titleEl = document.createElement('div');
+    titleEl.textContent = item.title || '(untitled)';
+    titleEl.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    const subEl = document.createElement('a');
+    subEl.textContent = `r/${item.subreddit}`;
+    subEl.href   = `${location.origin + location.pathname}?r=${encodeURIComponent(item.subreddit)}`;
+    subEl.target = '_blank';
+    subEl.rel    = 'noopener noreferrer';
+    subEl.style.cssText = 'color:var(--blue);font-size:0.65rem;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-decoration:none;';
+    subEl.addEventListener('click', e => e.stopPropagation());
+    cap.appendChild(titleEl);
+    cap.appendChild(subEl);
+  } else {
+    cap.textContent = item.title || '(untitled)';
+  }
   card.appendChild(cap);
 
   return card;
@@ -707,22 +1624,17 @@ function renderLb() {
       lbVid.load();
       lbVid.play().catch(() => {});
     } else {
-      /* Redgifs not resolved yet — fall back to post */
-      window.open(item.postUrl, '_blank', 'noopener');
+      /* Src not resolved — open redgif page if available, else reddit post */
+      const dest = item.rgid
+        ? `https://www.redgifs.com/watch/${item.rgid}`
+        : item.postUrl;
+      window.open(dest, '_blank', 'noopener noreferrer');
       closeLb();
       return;
     }
   } else {
-    /* Show preview immediately, swap to full-res when loaded */
-    lbImg.src    = item.preview || '';
+    lbImg.src    = item.src || item.preview || '';
     lbImg.hidden = false;
-    if (item.src && item.src !== item.preview) {
-      const full  = new Image();
-      full.onload = () => {
-        if (S.lb && S.lb.list[S.lb.idx] === item) lbImg.src = item.src;
-      };
-      full.src = item.src;
-    }
   }
 
   $('lb-prev').style.visibility = idx > 0              ? '' : 'hidden';
@@ -769,8 +1681,494 @@ document.querySelectorAll('.tab').forEach(btn => {
     document.querySelectorAll('.tab-pane').forEach(g => {
       g.id === 'grid-' + tab ? g.removeAttribute('hidden') : g.setAttribute('hidden', '');
     });
+    updateLoadMore();
   });
 });
+
+$('load-more-btn').addEventListener('click', () => loadMore(getActiveTab()));
+
+/* ── Selection ───────────────────────────────────── */
+
+function toggleSelectMode() {
+  S.selecting = !S.selecting;
+  const btn = $('select-btn');
+  if (S.selecting) {
+    btn.textContent = 'Cancel';
+    btn.classList.add('active');
+    document.getElementById('main').classList.add('select-mode');
+    $('dl-bar').removeAttribute('hidden');
+  } else {
+    btn.textContent = 'Select';
+    btn.classList.remove('active');
+    document.getElementById('main').classList.remove('select-mode');
+    $('dl-bar').setAttribute('hidden', '');
+    clearSelection();
+  }
+}
+
+function toggleCard(item) {
+  const card = item._el;
+  if (S.selected.has(item)) {
+    S.selected.delete(item);
+    card.classList.remove('selected');
+  } else {
+    S.selected.add(item);
+    card.classList.add('selected');
+  }
+  updateSelectionUI();
+}
+
+function clearSelection() {
+  S.selected.forEach(item => item._el?.classList.remove('selected'));
+  S.selected.clear();
+  updateSelectionUI();
+}
+
+function selectAll() {
+  /* Select all items across all categories */
+  ['images','gifs','videos'].forEach(cat => {
+    S.items[cat].forEach(item => {
+      S.selected.add(item);
+      item._el?.classList.add('selected');
+    });
+  });
+  updateSelectionUI();
+}
+
+function updateSelectionUI() {
+  const n = S.selected.size;
+  $('dl-count-text').textContent = n === 1 ? '1 item selected' : `${n} items selected`;
+  $('dl-btn').disabled = n === 0;
+}
+
+$('select-btn').addEventListener('click', toggleSelectMode);
+$('sel-all-btn').addEventListener('click', selectAll);
+$('desel-deleted-btn').addEventListener('click', () => {
+  for (const item of [...S.selected]) {
+    if (item.archived) toggleCard(item);
+  }
+  updateSelectionUI();
+});
+$('desel-btn').addEventListener('click', clearSelection);
+$('dl-btn').addEventListener('click', downloadSelected);
+
+/* ── Download helpers ────────────────────────────── */
+
+function blobExt(blob, url) {
+  const map = { 'image/jpeg':'jpg','image/jpg':'jpg','image/png':'png',
+                'image/gif':'gif','image/webp':'webp',
+                'video/mp4':'mp4','video/webm':'webm' };
+  if (map[blob?.type]) return map[blob.type];
+  const m = (url || '').match(/\.(jpe?g|png|gif|webp|mp4|webm)(\?|$)/i);
+  return m ? m[1].replace('jpeg','jpg') : 'jpg';
+}
+
+/* Trigger a browser-native download for a URL (bypasses CORS blob requirement).
+   Works reliably for same-origin and some CDNs that send Content-Disposition. */
+function anchorDownload(url, filename) {
+  const a = Object.assign(document.createElement('a'), {
+    href     : url,
+    download : filename,
+    target   : '_blank',
+    rel      : 'noopener noreferrer',
+  });
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+function slug(s) {
+  return (s || 'media').replace(/[^a-z0-9]+/gi, '-').slice(0, 50)
+    .replace(/^-|-$/g, '') || 'media';
+}
+
+/* preview.redd.it → i.redd.it (same file, no auth token needed).
+   external-preview.redd.it hosts third-party images — no i.redd.it equivalent, return null. */
+function toDirectUrl(url) {
+  if (!url) return null;
+  if (/^https?:\/\/i\.redd\.it\//i.test(url))                return url;
+  if (/^https?:\/\/i\.imgur\.com\//i.test(url))              return url;
+  if (/^https?:\/\/media\.redgifs\.com\//i.test(url))        return url;
+  if (/^https?:\/\/external-preview\.redd\.it\//i.test(url)) return null;
+  const m = url.match(/\/([a-zA-Z0-9]+\.(?:jpe?g|png|gif|webp))(?:\?|$)/i);
+  return m ? `https://i.redd.it/${m[1]}` : null;
+}
+
+/* wsrv.nl: image CDN proxy (ACAO:*). Encode ? and & to preserve auth tokens.
+   codetabs + allorigins: general CORS proxies used as fallback. */
+const DL_PROXIES = [
+  u => `https://wsrv.nl/?url=${u.replace(/^https?:\/\//i, '').replace('?', '%3F').replace(/&/g, '%26')}`,
+  u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+  u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+  u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+];
+
+/* Re-encode an image blob through canvas — strips all EXIF/XMP/IPTC metadata.
+   Uses an object URL so the canvas is never tainted (same-origin blob). */
+function stripExif(blob) {
+  return new Promise(resolve => {
+    const objUrl = URL.createObjectURL(blob);
+    const img    = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width  = img.naturalWidth;
+      c.height = img.naturalHeight;
+      c.getContext('2d').drawImage(img, 0, 0);
+      URL.revokeObjectURL(objUrl);
+      const mime = blob.type === 'image/png' ? 'image/png' : 'image/jpeg';
+      c.toBlob(b => resolve(b || blob), mime, 0.95);
+    };
+    img.onerror = () => { URL.revokeObjectURL(objUrl); resolve(blob); };
+    img.src = objUrl;
+  });
+}
+
+/* Last-resort: draw into canvas (works when server has ACAO:*) */
+function canvasBlob(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const c = document.createElement('canvas');
+        c.width  = img.naturalWidth;
+        c.height = img.naturalHeight;
+        c.getContext('2d').drawImage(img, 0, 0);
+        c.toBlob(b => b ? resolve(b) : reject(new Error('null blob')),
+          /\.png(\?|$)/i.test(url) ? 'image/png' : 'image/jpeg', 0.93);
+      } catch (e) { reject(e); }
+    };
+    img.onerror = () => reject(new Error('img load failed'));
+    img.src = url;
+  });
+}
+
+/* Stream response body in chunks — avoids proxy timeouts on large video files */
+async function streamBlob(response) {
+  const reader = response.body?.getReader();
+  if (!reader) return response.blob();
+  const chunks = [];
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  return new Blob(chunks, { type: response.headers.get('content-type') || 'video/mp4' });
+}
+
+async function fetchBlob(url) {
+  const isVideo    = /\.(mp4|webm|mov)(\?|$)/i.test(url);
+  const direct     = toDirectUrl(url);
+  const candidates = [...new Set([direct, url].filter(Boolean))];
+
+  if (/^https?:\/\/media\.redgifs\.com\//i.test(url))
+    candidates.push(url.replace('media.redgifs.com', 'thumbs2.redgifs.com'));
+
+  const isAnim  = isVideo || /\.gif(\?|$)/i.test(url);
+  const errors  = [];
+  const proxies = isVideo ? DL_PROXIES.slice(1) : DL_PROXIES;
+  const read    = r => isVideo ? streamBlob(r) : r.blob();
+
+  /* 1 — direct */
+  for (const u of candidates) {
+    try {
+      const r = await fetch(u, BASE_OPTS);
+      if (r.ok) return read(r);
+      errors.push(`${u} → HTTP ${r.status}`);
+    } catch (e) { errors.push(`${u} → ${e.message}`); }
+  }
+
+  /* 2 — CORS proxies */
+  for (const px of proxies) {
+    for (const u of candidates) {
+      try {
+        const r = await fetch(px(u), BASE_OPTS);
+        if (r.ok) return read(r);
+        errors.push(`proxy(${u}) → HTTP ${r.status}`);
+      } catch (e) { errors.push(`proxy(${u}) → ${e.message}`); }
+    }
+  }
+
+  /* 3 — canvas re-encode (static images only) */
+  if (!isAnim) {
+    for (const u of candidates) {
+      try { return await canvasBlob(u); }
+      catch (e) { errors.push(`canvas(${u}) → ${e.message}`); }
+    }
+  }
+
+  console.error('[fetchBlob] all attempts failed for', url, errors);
+  throw new Error(errors[0] || 'fetch failed');
+}
+
+/* Open a new tab with all failed Redgifs videos embedded as <video> elements.
+   The browser loads them fine (no CORS needed for <video> src) and the user
+   can right-click each one to "Save video as…". */
+function openRgSavePage(failedItems) {
+  /* Proxy list and download logic embedded in the helper page so it can
+     fetch+save without relying on the user right-clicking. */
+  const proxies = JSON.stringify([
+    'https://corsproxy.io/?',
+    'https://api.codetabs.com/v1/proxy?quest=',
+    'https://api.allorigins.win/raw?url=',
+  ]);
+
+  const cards = failedItems.map(({ item, num }) => {
+    const id     = item.rgid;
+    const sd     = (item.srcSd || `https://media.redgifs.com/${id}-mobile.mp4`).replace(/"/g, '&quot;');
+    const hd     = `https://media.redgifs.com/${id}.mp4`;
+    const poster = (item.poster || item.preview || '').replace(/"/g, '&quot;');
+    return `<div class="card" id="c${num}">
+  <div class="lbl">#${num}</div>
+  <video src="${sd}" ${poster ? `poster="${poster}"` : ''}
+    controls preload="metadata" onerror="this.src='${hd.replace(/"/g, '&quot;')}'"
+    style="width:100%;border-radius:6px;display:block;max-height:340px;background:#000;object-fit:contain"></video>
+  <div class="row">
+    <button onclick="dl('${id}','${sd}','${hd}','${num}')">&#8659; Download MP4</button>
+    <a href="https://www.redgifs.com/watch/${id}" target="_blank" class="watch">Open on Redgifs ↗</a>
+  </div>
+  <div class="status" id="s${num}"></div>
+</div>`;
+  }).join('\n');
+
+  const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<title>Save Videos (${failedItems.length})</title>
+<style>
+*{box-sizing:border-box}
+body{background:#111;color:#ddd;font:14px/1.5 sans-serif;margin:0;padding:20px}
+h2{margin:0 0 8px;font-size:1.15rem}
+.banner{background:#1a1400;border:1px solid #f59e0b;border-radius:8px;padding:11px 14px;margin-bottom:20px;font-size:.9rem}
+.banner strong{color:#fbbf24}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.card{background:#1c1c1c;border-radius:10px;padding:12px}
+.lbl{font-size:.78rem;color:#777;margin-bottom:6px}
+.row{display:flex;align-items:center;gap:10px;margin-top:8px}
+button{background:#f59e0b;color:#000;border:none;border-radius:6px;padding:7px 14px;font-size:.88rem;font-weight:600;cursor:pointer}
+button:hover{background:#fbbf24}
+button:disabled{background:#555;color:#888;cursor:default}
+.watch{font-size:.82rem;color:#aaa;text-decoration:none}
+.watch:hover{color:#ddd}
+.status{font-size:.8rem;margin-top:5px;min-height:1.2em;color:#aaa}
+.ok{color:#4ade80}.err{color:#f87171}
+</style></head>
+<body>
+<h2>Videos that couldn't be fetched automatically (${failedItems.length})</h2>
+<div class="banner">
+  Click <strong>Download MP4</strong> — the page will try several proxies and save the file directly.<br>
+  If that fails, click <strong>Open on Redgifs</strong> and use the download button there.
+</div>
+<div class="grid">${cards}</div>
+<script>
+const PROXIES = ${proxies};
+async function dl(id, sd, hd, num) {
+  const btn = document.querySelector('#c'+num+' button');
+  const st  = document.getElementById('s'+num);
+  btn.disabled = true;
+  for (const url of [sd, hd]) {
+    for (const px of PROXIES) {
+      st.textContent = 'Trying ' + new URL(px.endsWith('=') ? px + encodeURIComponent(url) : px + encodeURIComponent(url)).hostname + '…';
+      try {
+        const sig = AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined;
+        const r = await fetch(px + encodeURIComponent(url), {
+          credentials: 'omit',
+          headers: { Range: 'bytes=0-' },
+          ...(sig ? { signal: sig } : {})
+        });
+        if (!r.ok && r.status !== 206) continue;
+        const ct = (r.headers.get('content-type') || '').toLowerCase();
+        if (ct.includes('xml') || ct.startsWith('text/') || ct.includes('json') || ct.startsWith('image/')) continue;
+        const blob = await r.blob();
+        if (blob.size < 50000) continue;
+        const a = Object.assign(document.createElement('a'), {
+          href: URL.createObjectURL(blob), download: id + '.mp4'
+        });
+        document.body.appendChild(a); a.click();
+        setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+        st.className = 'status ok'; st.textContent = 'Saved ' + (blob.size/1e6).toFixed(1) + ' MB ✓';
+        btn.disabled = false; return;
+      } catch {}
+    }
+  }
+  st.className = 'status err'; st.textContent = 'Proxy fetch failed — use "Open on Redgifs" link above';
+  btn.disabled = false;
+}
+<\/script>
+</body></html>`;
+
+  const blobUrl = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+  const win     = window.open(blobUrl, '_blank');
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
+  return !!win;
+}
+
+async function fetchRgBlob(rgid, srcSd) {
+  const hdUrl = `https://media.redgifs.com/${rgid}.mp4`;
+  const sdUrl = srcSd || `https://media.redgifs.com/${rgid}-mobile.mp4`;
+
+  /* Without Range header the CDN returns a DASH/XML manifest instead of MP4.
+     Sending Range: bytes=0- triggers actual video byte delivery. */
+  const tryFetch = async (url, signal) => {
+    const opts = { credentials: 'omit', headers: { Range: 'bytes=0-' } };
+    if (signal) opts.signal = signal;
+    const r = await fetch(url, opts);
+    if (!r.ok && r.status !== 206) throw new Error(`HTTP ${r.status}`);
+    const ct = (r.headers.get('content-type') || '').toLowerCase();
+    if (ct.includes('xml') || ct.startsWith('text/') || ct === 'application/json' || ct.startsWith('image/'))
+      throw new Error(`bad content-type: ${ct}`);
+    const b = await streamBlob(r);
+    if (b.size < 50_000) throw new Error(`too small: ${b.size}`);
+    return b;
+  };
+
+  /* 1 — direct with Range (CORS will reject, but covers edge cases) */
+  for (const u of [sdUrl, hdUrl]) {
+    try { return await tryFetch(u); } catch {}
+  }
+
+  /* 2 — all CORS proxies in parallel with Range header */
+  const proxyJobs = DL_PROXIES.slice(1).flatMap(px =>
+    [sdUrl, hdUrl].map(u => {
+      const sig = AbortSignal.timeout ? AbortSignal.timeout(10_000) : undefined;
+      return tryFetch(px(u), sig).catch(() => null);
+    })
+  );
+  const winner = (await Promise.all(proxyJobs)).find(Boolean);
+  if (winner) return winner;
+
+  throw new Error(`fetchRgBlob: all attempts failed for ${rgid}`);
+}
+
+/* ── Coomer API ──────────────────────────────────── */
+
+/* ── Download selected ───────────────────────────── */
+
+async function downloadSelected() {
+  const items = [...S.selected];
+  if (!items.length) return;
+
+  $('dl-btn').disabled = true;
+  const n = items.length;
+
+  /* For videos always use item.src (the actual MP4). Never fall back to the
+     poster/preview image — that would silently download a JPEG instead of a video. */
+  function srcFor(item) {
+    if (item.cat === 'videos') {
+      const src = item.src || (item.rgid ? `https://media.redgifs.com/${item.rgid}.mp4` : null);
+      if (!src) throw new Error('video URL not resolved — skipping');
+      return src;
+    }
+    return item.src || item.preview;
+  }
+
+  /* Re-resolve any Redgifs that have no src yet (e.g. API failed on first pass) */
+  const needSrc = items.filter(i => i.rgid && !i.src);
+  if (needSrc.length) {
+    setProgress('Fetching Redgifs video URLs…', `0 / ${needSrc.length}`, 0);
+    let resolved = 0;
+    for (let i = 0; i < needSrc.length; i += CFG.rgBatch) {
+      await Promise.allSettled(needSrc.slice(i, i + CFG.rgBatch).map(async item => {
+        try {
+          const tok = await fetchRgToken();
+          const r   = await apiFetch(`https://api.redgifs.com/v2/gifs/${item.rgid}`, {
+            headers: { Authorization: 'Bearer ' + tok }
+          });
+          if (!r.ok) return;
+          const { gif } = await r.json();
+          item.src     = gif.urls?.hd || gif.urls?.sd || `https://media.redgifs.com/${gif.id}.mp4`;
+          item.srcSd   = gif.urls?.sd || `https://media.redgifs.com/${gif.id}-mobile.mp4`;
+          item.poster  = gif.poster  || gif.thumbnail || item.poster;
+          item.preview = gif.poster  || gif.thumbnail || item.preview;
+          if (item._thumb) item._thumb.src = item.preview || '';
+        } catch { /* will be skipped in download loop */ }
+        resolved++;
+        setProgress('Fetching Redgifs video URLs…', `${resolved} / ${needSrc.length}`, resolved / needSrc.length);
+      }));
+    }
+  }
+
+  /* shared download loop — fills zip (if provided) or saves to dir */
+  const failedRg = [];
+  let done = 0, failed = 0;
+
+  const runLoop = async (onSuccess) => {
+    for (const item of items) {
+      const num = String(done + 1).padStart(4, '0');
+      setProgress(`Downloading ${done + 1} / ${n}…`, '', done / n);
+      try {
+        let blob;
+        if (item.rgid) {
+          blob = await fetchRgBlob(item.rgid, item.srcSd);
+        } else {
+          blob = await fetchBlob(srcFor(item));
+        }
+        const url = item.src || item.preview || '';
+        if (item.cat === 'images' && blob.type.startsWith('image/')) blob = await stripExif(blob);
+        const ext  = item.cat === 'videos' ? 'mp4' : blobExt(blob, url);
+        await onSuccess(num, ext, blob);
+      } catch (e) {
+        console.error('[DL] skipped:', item.rgid || item.src || item.preview, e.message);
+        if (item.rgid) failedRg.push({ item, num });
+        failed++;
+      }
+      done++;
+    }
+  };
+
+  if ('showDirectoryPicker' in window) {
+    /* ── Folder picker (Chrome / Edge) ── */
+    let dir;
+    try { dir = await window.showDirectoryPicker({ mode: 'readwrite' }); }
+    catch { $('dl-btn').disabled = false; return; }
+
+    await runLoop(async (num, ext, blob) => {
+      const fh = await dir.getFileHandle(`${num}.${ext}`, { create: true });
+      const wr = await fh.createWritable();
+      await wr.write(blob);
+      await wr.close();
+    });
+
+    const hint = failedRg.length ? `${failedRg.length} Redgifs video(s) — see new tab` : failed ? `${failed} failed` : '';
+    setProgress(`Saved ${done - failed} / ${n} files`, hint, 1);
+
+  } else {
+    /* ── ZIP fallback (Firefox / Safari) ── */
+    const zip = new JSZip();
+
+    await runLoop(async (num, ext, blob) => {
+      zip.file(`${num}.${ext}`, await blob.arrayBuffer());
+    });
+
+    setProgress('Building ZIP…', '', 0.99);
+    const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+    const hasVid = items.some(i => i.cat === 'videos');
+    const hasPic = items.some(i => i.cat === 'images' || i.cat === 'gifs');
+    const suffix = hasVid && !hasPic ? 'videos' : hasPic && !hasVid ? 'pictures' : 'media';
+    const a = Object.assign(document.createElement('a'), {
+      href     : URL.createObjectURL(zipBlob),
+      download : `${S.user}-${suffix}.zip`,
+    });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+    const hint = failedRg.length ? `${failedRg.length} Redgifs video(s) — see new tab` : failed ? `${failed} failed` : '';
+    setProgress(`Done — ${done - failed} files in ZIP`, hint, 1);
+  }
+
+  /* For any Redgifs that couldn't be fetched (CDN blocks cross-origin blob reads),
+     open a helper tab where each video is embedded and the user can right-click to save. */
+  if (failedRg.length) {
+    const opened = openRgSavePage(failedRg);
+    if (!opened) {
+      /* Popup was blocked — update the status message to tell the user */
+      setProgress(
+        `${done - failed} downloaded, ${failedRg.length} need manual save`,
+        'Popup blocked — allow popups and click Download again',
+        1
+      );
+    }
+  }
+
+  $('dl-btn').disabled = S.selected.size === 0;
+}
 
 /* ── UI helpers ──────────────────────────────────── */
 function updateCounts() {
@@ -795,6 +2193,33 @@ function showError(msg) {
   area.removeAttribute('hidden');
 }
 
+/* ── Mode toggle ─────────────────────────────────── */
+function setMode(m) {
+  _mode = m;
+  $('mode-user').classList.toggle('active', m === 'user');
+  $('mode-sub').classList.toggle('active', m === 'subreddit');
+  if (m === 'subreddit') {
+    $('sort-row').removeAttribute('hidden');
+    usernameEl.placeholder = 'Subreddit name (e.g. pics)';
+  } else {
+    $('sort-row').setAttribute('hidden', '');
+    usernameEl.placeholder = 'Reddit username (e.g. spez)';
+  }
+}
+$('mode-user').addEventListener('click', () => setMode('user'));
+$('mode-sub').addEventListener('click', () => setMode('subreddit'));
+/* ── Sort dropdowns (subreddit mode only) ────────── */
+$('sort-select').addEventListener('change', () => {
+  _sort = $('sort-select').value;
+  $('time-select').hidden = _sort !== 'top';
+});
+$('time-select').addEventListener('change', () => {
+  _topTime = $('time-select').value;
+});
+
+
+$('new-search-btn').addEventListener('click', () => window.open(location.origin + location.pathname, '_blank'));
+
 /* ── Entry point ─────────────────────────────────── */
 scrapeBtn.addEventListener('click', startScrape);
 usernameEl.addEventListener('keydown', e => { if (e.key === 'Enter') startScrape(); });
@@ -806,9 +2231,17 @@ async function startScrape() {
   S = mkState();
   S.user    = user;
   S.loading = true;
+  _useProxy = false;
+
+  /* Reset select state from previous scrape */
+  if (S.selecting) toggleSelectMode();
+  S.selected.clear();
+  $('select-btn').setAttribute('hidden', '');
 
   scrapeBtn.disabled = true;
   $('error-area').setAttribute('hidden', '');
+  $('profile-card').setAttribute('hidden', '');
+  $('load-more-row').setAttribute('hidden', '');
   $('empty-notice').setAttribute('hidden', '');
   $('main').removeAttribute('hidden');
   $('grid-images').innerHTML = '';
@@ -822,7 +2255,9 @@ async function startScrape() {
   });
 
   try {
+    if (_mode === 'user') fetchUserProfile(S.user); /* fire-and-forget */
     await fetchAllPosts();
+    if (_mode === 'user') await fetchArchivedPosts();
 
     if (total() === 0) {
       $('empty-notice').removeAttribute('hidden');
@@ -831,7 +2266,10 @@ async function startScrape() {
     }
 
     if (S.rgQueue.length) await resolveRedgifs();
+    updateSubBadges();
+    updateLoadMore();
     setProgress(`Done — ${total()} items found`, '', 1);
+    $('select-btn').removeAttribute('hidden');
 
   } catch (err) {
     showError(err.message);
@@ -841,6 +2279,287 @@ async function startScrape() {
     scrapeBtn.disabled = false;
   }
 }
+
+/* ── Subreddit finder ────────────────────────────── */
+let _subSearchTimer = null;
+let _finderOpen = false;
+
+function setFinderOpen(open) {
+  _finderOpen = open;
+  $('finder-page').hidden  = !open;
+  $('find-sub-btn').classList.toggle('active', open);
+  $('profile-card').setAttribute('hidden', '');
+  $('progress-area').hidden = open;
+  $('error-area').hidden    = open;
+  $('main').hidden          = open;
+  if (open) { setRevSearchOpen(false); setRedditSearchOpen(false); setTimeout(() => $('sub-search').focus(), 50); }
+}
+
+$('find-sub-btn').addEventListener('click', () => setFinderOpen(!_finderOpen));
+
+$('sub-search').addEventListener('input', () => {
+  clearTimeout(_subSearchTimer);
+  const q = $('sub-search').value.trim();
+  if (!q) { $('sub-results').innerHTML = ''; return; }
+  _subSearchTimer = setTimeout(() => searchSubs(q), 400);
+});
+
+async function searchSubs(q) {
+  const res = $('sub-results');
+  res.innerHTML = '<div style="color:var(--muted);font-size:.85rem;padding:4px 0">Searching…</div>';
+  try {
+    const r = await apiFetch(
+      `https://www.reddit.com/subreddits/search.json?q=${encodeURIComponent(q)}&limit=25&raw_json=1&include_over_18=1`
+    );
+    if (!r.ok) throw new Error();
+    const { data } = await r.json();
+    const raw = data.children.map(c => c.data);
+    const ql  = q.toLowerCase();
+    /* Sort: exact name → name starts-with → name contains → rest; then by subscribers */
+    const rank = s => {
+      const n = (s.display_name || '').toLowerCase();
+      if (n === ql)            return 0;
+      if (n.startsWith(ql))   return 1;
+      if (n.includes(ql))     return 2;
+      return 3;
+    };
+    const subs = raw.sort((a, b) => {
+      const dr = rank(a) - rank(b);
+      return dr !== 0 ? dr : (b.subscribers || 0) - (a.subscribers || 0);
+    });
+    if (!subs.length) {
+      res.innerHTML = '<div style="color:var(--muted);font-size:.85rem;padding:4px 0">No subreddits found.</div>';
+      return;
+    }
+    res.innerHTML = '';
+    for (const s of subs) {
+      const card = document.createElement('div');
+      card.className = 'sub-result';
+      card.innerHTML =
+        `<div class="sub-result-left">` +
+          `<div class="sub-result-name">r/${htmlEsc(s.display_name)}</div>` +
+          `<div class="sub-result-meta">${(s.subscribers || 0).toLocaleString()} members</div>` +
+        `</div>` +
+        (s.over18 ? `<span class="nsfw-pill">NSFW</span>` : '') +
+        `<div class="sub-result-desc">${htmlEsc(s.public_description || s.title || '')}</div>`;
+      card.addEventListener('click', () => {
+        setMode('subreddit');
+        usernameEl.value = s.display_name;
+        setFinderOpen(false);
+        startScrape();
+      });
+      res.appendChild(card);
+    }
+  } catch {
+    res.innerHTML = '<div style="color:var(--muted);font-size:.85rem;padding:4px 0">Search failed.</div>';
+  }
+}
+
+
+/* ── Reverse image search ────────────────────────── */
+let _revSearchOpen  = false;
+let _revSearchTimer = null;
+
+function setRevSearchOpen(open) {
+  _revSearchOpen = open;
+  $('rev-search-page').hidden = !open;
+  $('rev-search-btn').classList.toggle('active', open);
+  $('profile-card').setAttribute('hidden', '');
+  $('progress-area').hidden = open;
+  $('error-area').hidden    = open;
+  $('main').hidden          = open;
+  if (open) { setFinderOpen(false); setRedditSearchOpen(false); setTimeout(() => $('rev-search-input').focus(), 50); }
+}
+
+$('rev-search-btn').addEventListener('click', () => setRevSearchOpen(!_revSearchOpen));
+
+$('rev-search-input').addEventListener('input', () => {
+  clearTimeout(_revSearchTimer);
+  const q = $('rev-search-input').value.trim();
+  $('rev-preview-img').hidden = true;
+  $('rev-ext-btns').hidden    = true;
+  $('rev-search-results').innerHTML = '';
+  if (!q) return;
+  _revSearchTimer = setTimeout(() => doReverseSearch(q), 600);
+});
+
+async function doReverseSearch(rawInput) {
+  const resultsEl  = $('rev-search-results');
+  const previewImg = $('rev-preview-img');
+  const extBtns    = $('rev-ext-btns');
+  resultsEl.innerHTML = '<div style="color:var(--muted);font-size:.85rem;">Searching…</div>';
+
+  let imageUrl = rawInput.trim();
+
+  /* If it's a Reddit post URL, fetch the post and extract the image URL */
+  const postMatch = imageUrl.match(/reddit\.com\/(?:r|u)\/[^/]+\/comments\/([a-z0-9]+)/i);
+  if (postMatch) {
+    try {
+      const r = await apiFetch(`https://www.reddit.com/comments/${postMatch[1]}.json?limit=1&raw_json=1`);
+      if (r.ok) {
+        const json  = await r.json();
+        const post  = json[0]?.data?.children?.[0]?.data;
+        const src   = post?.url || '';
+        if (src && /^https?:\/\/i\.redd\.it\//i.test(src)) imageUrl = src;
+        else if (src && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(src)) imageUrl = src;
+        else {
+          const previewSrc = post?.preview?.images?.[0]?.source?.url || '';
+          if (previewSrc) imageUrl = dec(previewSrc);
+        }
+      }
+    } catch {}
+  }
+
+  /* Strip query params for a cleaner search query */
+  const cleanUrl = imageUrl.replace(/\?.*$/, '');
+
+  /* Show image preview */
+  previewImg.src    = cleanUrl;
+  previewImg.hidden = false;
+
+  /* External reverse-image search buttons */
+  extBtns.hidden    = false;
+  extBtns.innerHTML = [
+    ['Google Lens',  `https://lens.google.com/uploadbyurl?url=${encodeURIComponent(cleanUrl)}`],
+    ['SauceNAO',     `https://saucenao.com/?url=${encodeURIComponent(cleanUrl)}`],
+    ['TinEye',       `https://tineye.com/search?url=${encodeURIComponent(cleanUrl)}`],
+    ['Yandex Images',`https://yandex.com/images/search?url=${encodeURIComponent(cleanUrl)}&rpt=imageview`],
+  ].map(([label, href]) =>
+    `<a href="${htmlEsc(href)}" target="_blank" rel="noopener noreferrer" class="lb-link">${htmlEsc(label)} ↗</a>`
+  ).join('');
+
+  /* Search Reddit for posts whose link IS this image URL */
+  const found = new Map(); /* username → [{ title, postUrl, sub }] */
+  try {
+    const r = await apiFetch(
+      `https://www.reddit.com/search.json?q=url:${encodeURIComponent(cleanUrl)}&include_over_18=1&limit=100&sort=new&raw_json=1`
+    );
+    if (r.ok) {
+      const { data } = await r.json();
+      for (const child of (data?.children || [])) {
+        const p = child.data;
+        if (!p?.author || p.author === '[deleted]') continue;
+        if (!found.has(p.author)) found.set(p.author, []);
+        found.get(p.author).push({
+          title:   p.title || '',
+          postUrl: 'https://reddit.com' + (p.permalink || ''),
+          sub:     p.subreddit_name_prefixed || '',
+        });
+      }
+    }
+  } catch {}
+
+  if (!found.size) {
+    resultsEl.innerHTML =
+      '<div style="color:var(--muted);font-size:.85rem;padding:4px 0">' +
+      'No Reddit posts found with this exact URL. Use the buttons above for visual reverse search.' +
+      '</div>';
+    return;
+  }
+
+  resultsEl.innerHTML = '';
+  for (const [username, posts] of found) {
+    const post = posts[0];
+    const card = document.createElement('div');
+    card.className = 'sub-result';
+    card.innerHTML =
+      `<div class="sub-result-left">` +
+        `<div class="sub-result-name">u/${htmlEsc(username)}</div>` +
+        `<div class="sub-result-meta">` +
+          `${htmlEsc(post.sub)}${post.sub ? ' · ' : ''}${htmlEsc(post.title.slice(0, 90))}` +
+          (posts.length > 1 ? ` <span style="color:var(--accent);font-weight:700">(${posts.length} posts)</span>` : '') +
+        `</div>` +
+      `</div>`;
+    card.addEventListener('click', () => {
+      setMode('user');
+      usernameEl.value = username;
+      setRevSearchOpen(false);
+      startScrape();
+    });
+    resultsEl.appendChild(card);
+  }
+}
+
+/* ── Reddit search ───────────────────────────────── */
+let _redditSearchOpen  = false;
+let _redditSearchTimer = null;
+
+function setRedditSearchOpen(open) {
+  _redditSearchOpen = open;
+  $('reddit-search-page').hidden = !open;
+  $('reddit-search-btn').classList.toggle('active', open);
+  $('profile-card').setAttribute('hidden', '');
+  $('progress-area').hidden = open;
+  $('error-area').hidden    = open;
+  $('main').hidden          = open;
+  if (open) { setFinderOpen(false); setRevSearchOpen(false); setTimeout(() => $('reddit-search-input').focus(), 50); }
+}
+
+$('reddit-search-btn').addEventListener('click', () => setRedditSearchOpen(!_redditSearchOpen));
+
+$('reddit-search-input').addEventListener('input', () => {
+  clearTimeout(_redditSearchTimer);
+  const q = $('reddit-search-input').value.trim();
+  if (!q) { $('reddit-search-results').innerHTML = ''; return; }
+  _redditSearchTimer = setTimeout(() => searchReddit(q), 400);
+});
+
+async function searchReddit(q) {
+  const res = $('reddit-search-results');
+  res.innerHTML = '<div style="color:var(--muted);font-size:.85rem;padding:4px 0;grid-column:1/-1">Searching…</div>';
+  try {
+    const r = await apiFetch(
+      `https://www.reddit.com/search.json?q=${encodeURIComponent(q)}&include_over_18=1&sort=relevance&limit=100&raw_json=1`
+    );
+    if (!r.ok) throw new Error();
+    const { data } = await r.json();
+    const posts = (data?.children || []).map(c => c.data).filter(p => p?.author && p.author !== '[deleted]');
+    if (!posts.length) {
+      res.innerHTML = '<div style="color:var(--muted);font-size:.85rem;padding:4px 0;grid-column:1/-1">No results found.</div>';
+      return;
+    }
+    res.innerHTML = '';
+    for (const p of posts) {
+      const card = document.createElement('div');
+      card.className = 'sub-result';
+      card.style.cursor = 'default';
+      card.innerHTML =
+        `<div class="sub-result-left" style="flex:1;min-width:0;">` +
+          `<div class="sub-result-name" style="font-weight:400;font-size:.85rem;white-space:normal;line-height:1.4;">${htmlEsc(p.title)}</div>` +
+          `<div class="sub-result-meta" style="margin-top:4px;">` +
+            `<span class="rs-sub" data-sub="${htmlEsc(p.subreddit)}" style="color:var(--blue);cursor:pointer;">r/${htmlEsc(p.subreddit)}</span>` +
+            ` · ` +
+            `<span class="rs-user" data-user="${htmlEsc(p.author)}" style="color:var(--accent);cursor:pointer;">u/${htmlEsc(p.author)}</span>` +
+          `</div>` +
+        `</div>` +
+        (p.over_18 ? `<span class="nsfw-pill">NSFW</span>` : '');
+      card.querySelector('.rs-sub').addEventListener('click', () => {
+        setMode('subreddit');
+        usernameEl.value = p.subreddit;
+        setRedditSearchOpen(false);
+        startScrape();
+      });
+      card.querySelector('.rs-user').addEventListener('click', () => {
+        setMode('user');
+        usernameEl.value = p.author;
+        setRedditSearchOpen(false);
+        startScrape();
+      });
+      res.appendChild(card);
+    }
+  } catch {
+    res.innerHTML = '<div style="color:var(--muted);font-size:.85rem;padding:4px 0;grid-column:1/-1">Search failed.</div>';
+  }
+}
+
+/* ── Auto-start from ?u=username or ?r=subreddit URL parameter ── */
+(function () {
+  const params = new URLSearchParams(location.search);
+  const u = params.get('u');
+  const r = params.get('r');
+  if (u) { setMode('user');      usernameEl.value = u; startScrape(); }
+  else if (r) { setMode('subreddit'); usernameEl.value = r; startScrape(); }
+}());
 </script>
 </body>
 </html>
