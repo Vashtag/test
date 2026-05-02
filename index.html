@@ -1733,12 +1733,9 @@ function clearSelection() {
 }
 
 function selectAll() {
-  /* Select all items across all categories */
-  ['images','gifs','videos'].forEach(cat => {
-    S.items[cat].forEach(item => {
-      S.selected.add(item);
-      item._el?.classList.add('selected');
-    });
+  S.items.images.forEach(item => {
+    S.selected.add(item);
+    item._el?.classList.add('selected');
   });
   updateSelectionUI();
 }
